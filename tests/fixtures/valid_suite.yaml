@@ -1,0 +1,16 @@
+version: 1
+sources:
+  trips:
+    path: data/trips.parquet
+checks:
+  trips:
+    - not_null: [trip_id, pickup_ts]
+    - unique: trip_id
+    - accepted_values:
+        column: payment_type
+        values: [card, cash]
+    - range: {column: fare, min: 0, max: 1000}
+    - freshness: {column: pickup_ts, max_age: 24h}
+    - custom_sql:
+        name: no_negative_duration
+        query: SELECT * FROM trips WHERE dropoff_ts < pickup_ts
