@@ -22,14 +22,24 @@ Más sobre el porqué en [docs/philosophy.md](docs/philosophy.md).
 
 ## Instalación
 
-Requiere Python 3.11+ y [uv](https://docs.astral.sh/uv/). Desde el repo:
+Requiere Python 3.11+ y [uv](https://docs.astral.sh/uv/).
+
+**Global (el comando `quacklint` disponible en cualquier carpeta):**
 
 ```console
-$ uv sync
-$ uv run quacklint --help
+$ uv tool install --editable /ruta/al/repo/quacklint
+$ quacklint --help
 ```
 
-(También funciona `pip install .` en un entorno propio.)
+- `--editable` hace que los cambios en el código del repo se reflejen sin
+  reinstalar (recomendado mientras el proyecto está en desarrollo activo);
+  quítalo si prefieres una copia congelada.
+- Si `uv` avisa de que `~/.local/bin` no está en tu PATH: `uv tool update-shell`.
+- Para actualizar o desinstalar: `uv tool upgrade quacklint` /
+  `uv tool uninstall quacklint`.
+
+**Para desarrollar** (entorno del repo, sin instalar nada global): ver
+[Desarrollo](#desarrollo).
 
 ## Quickstart en 30 segundos
 
@@ -62,7 +72,7 @@ checks:
 Y a correr:
 
 ```console
-$ uv run quacklint run suite.yaml
+$ quacklint run suite.yaml
 ┏━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ estado ┃ fuente ┃ check           ┃ filas ┃ detalle                        ┃
 ┡━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
@@ -138,3 +148,17 @@ $ uv run python scripts/gen_checks_reference.py        # regenera docs/checks-re
 `docs/checks-reference.md` se genera desde los docstrings de
 [builtin.py](src/quacklint/checks/builtin.py); un test falla si queda
 desactualizado.
+
+## Publicar en PyPI (pasos futuros)
+
+El paquete ya se construye correctamente (`uv build` produce wheel y sdist).
+Para publicarlo quedaría:
+
+1. Completar metadatos en `pyproject.toml`: `license = "MIT"` + fichero
+   `LICENSE`, `authors`, `keywords` y `classifiers`.
+2. Ensayo opcional en TestPyPI:
+   `uv publish --publish-url https://test.pypi.org/legacy/ --token ...`.
+3. Cuenta en [pypi.org](https://pypi.org) + API token, y publicar:
+   `uv publish --token pypi-XXXX`.
+4. A partir de ahí la instalación pasa a ser `uv tool install quacklint`
+   (el nombre está libre en PyPI, verificado 2026-07-19).
