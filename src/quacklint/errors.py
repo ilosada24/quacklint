@@ -1,21 +1,21 @@
-"""Jerarquía de errores de quacklint.
+"""quacklint error hierarchy.
 
-El CLI captura `QuacklintError` y muestra su mensaje tal cual: los mensajes deben
-ser accionables y autocontenidos, nunca depender de un traceback.
+The CLI catches `QuacklintError` and shows its message as-is: messages must be
+actionable and self-contained, never relying on a traceback.
 """
 
 
 class QuacklintError(Exception):
-    """Error base de quacklint."""
+    """Base quacklint error."""
 
 
 class SpecError(QuacklintError):
-    """La suite YAML es inválida (sintaxis, estructura o valores)."""
+    """The YAML suite is invalid (syntax, structure or values)."""
 
 
 class SourceError(QuacklintError):
-    """Una fuente declarada no se puede resolver a una vista DuckDB."""
+    """A declared source cannot be resolved to a DuckDB view."""
 
 
 class ExecutionError(QuacklintError):
-    """Fallo al ejecutar el SQL de un check contra DuckDB."""
+    """Failure running a check's SQL against DuckDB."""

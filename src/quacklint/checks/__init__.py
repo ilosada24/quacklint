@@ -1,4 +1,4 @@
-"""Checks de quacklint: clase base, registro y checks incorporados."""
+"""quacklint checks: base class, registry and built-in checks."""
 
 from quacklint.checks.base import (
     Check,

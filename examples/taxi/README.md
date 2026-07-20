@@ -1,32 +1,32 @@
-# Ejemplo: taxi
+# Example: taxi
 
-Suite completa (usa los 8 tipos de check del contrato) sobre un CSV sintético
-de viajes de taxi.
+Complete suite (uses all 8 check types from the contract) over a synthetic CSV
+of taxi trips.
 
 ```console
 $ uv run quacklint validate examples/taxi/quacklint.yaml
 $ uv run quacklint run examples/taxi/quacklint.yaml
 ```
 
-## Qué esperar
+## What to expect
 
-`data/trips.csv` contiene **errores deliberados**; `quacklint run` termina con
-exit 1 y este desglose:
+`data/trips.csv` contains **deliberate errors**; `quacklint run` ends with
+exit 1 and this breakdown:
 
-| Check                  | Resultado | Por qué                                              |
-| ---------------------- | --------- | ---------------------------------------------------- |
-| `not_null`             | PASS      | `trip_id` y `pickup_ts` no tienen NULL.              |
-| `unique`               | FAIL      | `t-004` aparece dos veces.                           |
-| `row_count`            | PASS      | Hay más de 1 fila.                                   |
-| `regex_match`          | PASS      | Todos los `trip_id` siguen el patrón `t-[0-9]{3}`.   |
-| `accepted_values`      | FAIL      | `t-004` paga con `voucher` (solo `card`/`cash`).     |
-| `range`                | FAIL      | `t-005` tiene `fare = -3.0`.                         |
-| `freshness`            | FAIL      | Los datos son de 2026-07-18, más viejos que `24h`.   |
-| `no_negative_duration` | FAIL      | En `t-005`, `dropoff_ts < pickup_ts` (`custom_sql`). |
+| Check                  | Result | Why                                                |
+| ---------------------- | ------ | -------------------------------------------------- |
+| `not_null`             | PASS   | `trip_id` and `pickup_ts` have no NULL.            |
+| `unique`               | FAIL   | `t-004` appears twice.                             |
+| `row_count`            | PASS   | There is more than 1 row.                          |
+| `regex_match`          | PASS   | Every `trip_id` follows the pattern `t-[0-9]{3}`.  |
+| `accepted_values`      | FAIL   | `t-004` pays with `voucher` (only `card`/`cash`).  |
+| `range`                | FAIL   | `t-005` has `fare = -3.0`.                         |
+| `freshness`            | FAIL   | The data is from 2026-07-18, older than `24h`.     |
+| `no_negative_duration` | FAIL   | For `t-005`, `dropoff_ts < pickup_ts` (`custom_sql`). |
 
-Prueba también:
+Try also:
 
 ```console
-$ uv run quacklint run examples/taxi/quacklint.yaml --explain    # ver el SQL
-$ uv run quacklint run examples/taxi/quacklint.yaml -f json      # informe JSON
+$ uv run quacklint run examples/taxi/quacklint.yaml --explain    # see the SQL
+$ uv run quacklint run examples/taxi/quacklint.yaml -f json      # JSON report
 ```

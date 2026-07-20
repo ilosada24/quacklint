@@ -1,7 +1,7 @@
-"""Tests de los checks implementados (not_null, unique, row_count).
+"""Tests for the implemented checks (not_null, unique, row_count).
 
-Los datos son Parquet sintéticos generados con duckdb y materializados como
-vistas vía `sources.create_views`, igual que en una ejecución real.
+The data is synthetic Parquet generated with duckdb and materialized as views
+via `sources.create_views`, just like in a real run.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from textwrap import dedent
 import duckdb
 import pytest
 
-import quacklint.checks.builtin  # noqa: F401  (registra los checks incorporados)
+import quacklint.checks.builtin  # noqa: F401  (registers the built-in checks)
 from quacklint.checks.base import build_check, get_check
 from quacklint.errors import ExecutionError, SourceError, SpecError
 from quacklint.sources import create_views
@@ -43,7 +43,7 @@ def conn() -> Iterator[duckdb.DuckDBPyConnection]:
 
 @pytest.fixture()
 def make_parquet(tmp_path: Path, conn: duckdb.DuckDBPyConnection) -> MakeParquet:
-    """Genera un Parquet sintético desde una consulta y lo expone como vista."""
+    """Generate a synthetic Parquet from a query and expose it as a view."""
 
     def _make(name: str, query: str) -> Path:
         path = tmp_path / f"{name}.parquet"
@@ -106,7 +106,7 @@ def test_unique_counts_duplicated_keys(
     make_parquet("t", "SELECT * FROM (VALUES (1), (1), (2), (2), (2), (3)) AS v(id)")
     result = build_check("t", UniqueSpec(columns=["id"])).evaluate(conn)
     assert not result.passed
-    assert result.failed_rows == 2  # dos claves duplicadas: 1 y 2
+    assert result.failed_rows == 2  # two duplicated keys: 1 and 2
 
 
 def test_unique_ignores_nulls(
@@ -126,7 +126,7 @@ def test_unique_composite_key(
     )
     result = build_check("t", UniqueSpec(columns=["id", "side"])).evaluate(conn)
     assert not result.passed
-    assert result.failed_rows == 1  # solo (1, 'a') está duplicada
+    assert result.failed_rows == 1  # only (1, 'a') is duplicated
 
 
 # ---------------------------------------------------------------------------
@@ -149,8 +149,8 @@ def test_row_count_below_min(
     make_parquet("t", "SELECT * FROM (VALUES (1), (2), (3)) AS v(id)")
     result = build_check("t", RowCountSpec(min=5)).evaluate(conn)
     assert not result.passed
-    assert "3 fila(s)" in result.message
-    assert "al menos 5" in result.message
+    assert "3 row(s)" in result.message
+    assert "at least 5" in result.message
 
 
 def test_row_count_above_max(
@@ -159,7 +159,7 @@ def test_row_count_above_max(
     make_parquet("t", "SELECT * FROM (VALUES (1), (2), (3)) AS v(id)")
     result = build_check("t", RowCountSpec(max=2)).evaluate(conn)
     assert not result.passed
-    assert "como mucho 2" in result.message
+    assert "at most 2" in result.message
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +251,7 @@ def test_range_min_only(
     make_parquet("t", "SELECT * FROM (VALUES (-1), (999999)) AS v(fare)")
     result = build_check("t", RangeSpec(column="fare", min=0)).evaluate(conn)
     assert not result.passed
-    assert result.failed_rows == 1  # solo el -1; sin cota superior
+    assert result.failed_rows == 1  # only the -1; no upper bound
 
 
 # ---------------------------------------------------------------------------
@@ -284,7 +284,7 @@ def test_regex_match_requires_full_match(
     make_parquet("t", "SELECT * FROM (VALUES ('xt-001y')) AS v(trip_id)")
     spec = RegexMatchSpec(column="trip_id", pattern=r"t-[0-9]{3}")
     result = build_check("t", spec).evaluate(conn)
-    assert not result.passed  # casaría parcialmente, pero exigimos match completo
+    assert not result.passed  # would match partially, but we require a full match
 
 
 def test_regex_match_ignores_nulls(
@@ -318,7 +318,7 @@ def test_freshness_fails_with_stale_data(
     result = build_check("t", spec).evaluate(conn)
     assert not result.passed
     assert result.failed_rows == 1
-    assert "edad máxima (1d)" in result.message  # 24h se normaliza a la unidad mayor
+    assert "max age (1d)" in result.message  # 24h normalizes to the largest unit
     assert "ts" in result.message
 
 
@@ -362,7 +362,7 @@ def test_custom_sql_reports_custom_name_and_failures(
     result = build_check("trips", spec).evaluate(conn)
     assert not result.passed
     assert result.failed_rows == 1
-    assert result.check == "no_negative_duration"  # reporta su nombre, no 'custom_sql'
+    assert result.check == "no_negative_duration"  # reports its name, not 'custom_sql'
 
 
 def test_custom_sql_passes_without_violations(
@@ -384,7 +384,7 @@ def test_custom_sql_handles_trailing_semicolon(
 
 
 # ---------------------------------------------------------------------------
-# columnas inexistentes → error de configuración, no fallo del check
+# nonexistent columns → configuration error, not a check failure
 # ---------------------------------------------------------------------------
 
 
@@ -415,7 +415,7 @@ def test_missing_column_is_config_error(tmp_path: Path, check_line: str) -> None
         ),
         encoding="utf-8",
     )
-    with pytest.raises(SpecError, match=r"missing_col.*Columnas disponibles: trip_id, n"):
+    with pytest.raises(SpecError, match=r"missing_col.*Available columns: trip_id, n"):
         Suite.from_file(tmp_path / "suite.yaml").run()
 
 
@@ -433,7 +433,7 @@ def test_create_views_reads_csv(conn: duckdb.DuckDBPyConnection, tmp_path: Path)
 
 
 def test_create_views_missing_file(conn: duckdb.DuckDBPyConnection, tmp_path: Path) -> None:
-    with pytest.raises(SourceError, match="no existe el fichero"):
+    with pytest.raises(SourceError, match="does not exist"):
         create_views(conn, {"t": SourceSpec(path="nope.parquet")}, tmp_path)
 
 
@@ -441,7 +441,7 @@ def test_create_views_unsupported_extension(
     conn: duckdb.DuckDBPyConnection, tmp_path: Path
 ) -> None:
     (tmp_path / "t.xlsx").write_text("x", encoding="utf-8")
-    with pytest.raises(SourceError, match="extensión no soportada"):
+    with pytest.raises(SourceError, match="unsupported extension"):
         create_views(conn, {"t": SourceSpec(path="t.xlsx")}, tmp_path)
 
 
@@ -458,7 +458,7 @@ def test_create_views_glob_unions_matching_files(
 
 
 def test_create_views_glob_no_match(conn: duckdb.DuckDBPyConnection, tmp_path: Path) -> None:
-    with pytest.raises(SourceError, match="no coincide con ningún fichero"):
+    with pytest.raises(SourceError, match="matches no files"):
         create_views(conn, {"t": SourceSpec(path="*.parquet")}, tmp_path)
 
 
@@ -505,14 +505,14 @@ def test_suite_run_end_to_end(tmp_path: Path) -> None:
     assert [r.source for r in results] == ["trips", "trips", "trips"]
     by_check = {r.check: r for r in results}
     assert not by_check["not_null"].passed
-    assert by_check["not_null"].failed_rows == 1  # el trip_id NULL
+    assert by_check["not_null"].failed_rows == 1  # the NULL trip_id
     assert not by_check["unique"].passed
-    assert by_check["unique"].failed_rows == 1  # 'a' duplicado (el NULL se ignora)
+    assert by_check["unique"].failed_rows == 1  # 'a' duplicated (the NULL is ignored)
     assert by_check["row_count"].passed
 
 
 def test_get_check_unknown_name_raises_clear_error() -> None:
-    with pytest.raises(ExecutionError, match="no tiene implementación ejecutable"):
+    with pytest.raises(ExecutionError, match="has no runnable implementation"):
         get_check("nope")
 
 
@@ -528,5 +528,5 @@ def test_suite_run_missing_source_file(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    with pytest.raises(SourceError, match="no existe el fichero"):
+    with pytest.raises(SourceError, match="does not exist"):
         Suite.from_file(tmp_path / "suite.yaml").run()

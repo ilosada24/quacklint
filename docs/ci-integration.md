@@ -1,12 +1,12 @@
-# Integración en CI
+# CI integration
 
-quacklint está pensado para ejecutarse en CI: códigos de salida estables
-(`0` todo pasa, `1` checks fallidos, `2` configuración inválida) y salida
-`junit` para que la plataforma muestre cada check como un test.
+quacklint is designed to run in CI: stable exit codes (`0` all pass, `1` checks
+failed, `2` invalid configuration) and `junit` output so the platform shows
+each check as a test.
 
 ## GitHub Actions
 
-Validar la suite en cada PR (disponible ya):
+Validate the suite on every PR (available today):
 
 ```yaml
 name: data-quality
@@ -24,7 +24,7 @@ jobs:
       - run: uv run quacklint validate quality/suite.yaml
 ```
 
-Ejecutar los checks y publicar resultados como informe JUnit:
+Run the checks and publish the results as a JUnit report:
 
 ```yaml
       - run: uv run quacklint run quality/suite.yaml --format junit > results.xml
@@ -34,9 +34,9 @@ Ejecutar los checks y publicar resultados como informe JUnit:
           report_paths: results.xml
 ```
 
-## Consejos
+## Tips
 
-- Versiona las suites YAML junto al código que produce los datos: los cambios
-  de reglas pasan por revisión igual que el código.
-- Usa `quacklint validate` como paso rápido (no toca los datos) y `quacklint
-  run` en el job que ya tiene acceso a los ficheros.
+- Version the YAML suites alongside the code that produces the data: rule
+  changes go through review just like code.
+- Use `quacklint validate` as a fast step (it doesn't touch the data) and
+  `quacklint run` in the job that already has access to the files.
