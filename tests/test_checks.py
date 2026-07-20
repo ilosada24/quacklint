@@ -340,6 +340,43 @@ def test_freshness_all_null_column_passes(
     assert result.passed
 
 
+def test_freshness_handles_tz_naive_timestamp_column(
+    conn: duckdb.DuckDBPyConnection, make_parquet: MakeParquet
+) -> None:
+    # A tz-naive TIMESTAMP column must not error and must give the right verdict
+    # (regression for the TIMESTAMP vs TIMESTAMPTZ comparison).
+    conn.execute("SET TimeZone='UTC'")
+    make_parquet("recent", "SELECT CAST(now() - INTERVAL 1 HOUR AS TIMESTAMP) AS ts")
+    make_parquet("stale", "SELECT CAST(now() - INTERVAL 3 DAY AS TIMESTAMP) AS ts")
+    spec = FreshnessSpec(column="ts", max_age=timedelta(hours=24))
+    assert build_check("recent", spec).evaluate(conn).passed
+    assert not build_check("stale", spec).evaluate(conn).passed
+
+
+def test_suite_run_pins_utc_timezone(tmp_path: Path) -> None:
+    # Suite.run must pin the session tz to UTC; a custom_sql that flags a
+    # non-UTC session should therefore find no violations.
+    _write_trips_parquet(tmp_path / "trips.parquet")
+    (tmp_path / "suite.yaml").write_text(
+        dedent(
+            """\
+            version: 1
+            sources:
+              trips:
+                path: trips.parquet
+            checks:
+              trips:
+                - custom_sql:
+                    name: session_is_utc
+                    query: SELECT 1 WHERE current_setting('TimeZone') <> 'UTC'
+            """
+        ),
+        encoding="utf-8",
+    )
+    results = Suite.from_file(tmp_path / "suite.yaml").run()
+    assert results[0].passed
+
+
 # ---------------------------------------------------------------------------
 # custom_sql
 # ---------------------------------------------------------------------------
@@ -417,6 +454,55 @@ def test_missing_column_is_config_error(tmp_path: Path, check_line: str) -> None
     )
     with pytest.raises(SpecError, match=r"missing_col.*Available columns: trip_id, n"):
         Suite.from_file(tmp_path / "suite.yaml").run()
+
+
+# ---------------------------------------------------------------------------
+# wrong column type → configuration error, not a cryptic DuckDB error
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("check_line", "expected"),
+    [
+        # trip_id is VARCHAR, n is INTEGER
+        ("- range: {column: trip_id, min: 0}", r"trip_id.*type VARCHAR.*requires a numeric"),
+        ("- freshness: {column: n, max_age: 24h}", r"'n'.*type INTEGER.*requires a temporal"),
+        ("- regex_match: {column: n, pattern: x}", r"'n'.*type INTEGER.*requires a text"),
+    ],
+)
+def test_wrong_column_type_is_config_error(
+    tmp_path: Path, check_line: str, expected: str
+) -> None:
+    _write_trips_parquet(tmp_path / "trips.parquet")
+    (tmp_path / "suite.yaml").write_text(
+        dedent(
+            f"""\
+            version: 1
+            sources:
+              trips:
+                path: trips.parquet
+            checks:
+              trips:
+                {check_line}
+            """
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SpecError, match=expected):
+        Suite.from_file(tmp_path / "suite.yaml").run()
+
+
+def test_sample_rows_are_deterministic(
+    conn: duckdb.DuckDBPyConnection, make_parquet: MakeParquet
+) -> None:
+    make_parquet(
+        "t", "SELECT * FROM (VALUES (3, NULL), (1, NULL), (2, NULL)) AS v(id, name)"
+    )
+    result = build_check("t", NotNullSpec(columns=["name"])).evaluate(conn)
+    assert not result.passed
+    # ORDER BY ALL sorts the sampled violations; ids come back 1, 2, 3.
+    ids = [row[result.sample_columns.index("id")] for row in result.sample_rows]
+    assert ids == ["1", "2", "3"]
 
 
 # ---------------------------------------------------------------------------

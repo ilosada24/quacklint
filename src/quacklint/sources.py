@@ -75,3 +75,9 @@ def view_columns(conn: duckdb.DuckDBPyConnection, name: str) -> list[str]:
     """Columns of a DuckDB view/table, in definition order."""
     rows = conn.execute(f"DESCRIBE {quote_ident(name)}").fetchall()
     return [str(row[0]) for row in rows]
+
+
+def view_column_types(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, str]:
+    """Map of column name to DuckDB type for a view/table, in definition order."""
+    rows = conn.execute(f"DESCRIBE {quote_ident(name)}").fetchall()
+    return {str(row[0]): str(row[1]) for row in rows}

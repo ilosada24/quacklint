@@ -19,8 +19,12 @@ class ReportFormat(StrEnum):
     JUNIT = "junit"
 
 
-def build_table(results: Sequence[CheckResult], sample_size: int = 3) -> Table:
-    """Rich table with one check per row and a sample of failing rows in the detail."""
+def build_table(results: Sequence[CheckResult]) -> Table:
+    """Rich table with one check per row and the sampled failing rows in the detail.
+
+    Shows every sample row attached to the result (the same set the JSON report
+    includes), so the two formats never disagree on the number of rows shown.
+    """
     table = Table()
     table.add_column("status")
     table.add_column("source")
@@ -34,7 +38,7 @@ def build_table(results: Sequence[CheckResult], sample_size: int = 3) -> Table:
             result.source,
             result.check,
             str(result.failed_rows),
-            escape(_detail(result, sample_size)),
+            escape(_detail(result)),
         )
     return table
 
@@ -46,7 +50,7 @@ def _fail_status(result: CheckResult) -> str:
     return "[red]FAIL[/red]"
 
 
-def _detail(result: CheckResult, sample_size: int) -> str:
+def _detail(result: CheckResult) -> str:
     if result.passed:
         return ""
     lines = [result.message] if result.message else []
@@ -56,7 +60,7 @@ def _detail(result: CheckResult, sample_size: int) -> str:
                 f"{column}={value}"
                 for column, value in zip(result.sample_columns, row, strict=True)
             )
-            for row in result.sample_rows[:sample_size]
+            for row in result.sample_rows
         )
         lines.append(f"sample: {sample}")
     return "\n".join(lines)
