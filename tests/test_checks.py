@@ -445,6 +445,23 @@ def test_create_views_unsupported_extension(
         create_views(conn, {"t": SourceSpec(path="t.xlsx")}, tmp_path)
 
 
+def test_create_views_glob_unions_matching_files(
+    conn: duckdb.DuckDBPyConnection, tmp_path: Path
+) -> None:
+    for letter, value in (("a", 1), ("b", 2)):
+        path = (tmp_path / f"{letter}.parquet").as_posix()
+        conn.execute(f"COPY (SELECT {value} AS id) TO '{path}' (FORMAT parquet)")
+    create_views(conn, {"t": SourceSpec(path="*.parquet")}, tmp_path)
+    rows = conn.execute('SELECT count(*) FROM "t"').fetchone()
+    assert rows is not None
+    assert rows[0] == 2
+
+
+def test_create_views_glob_no_match(conn: duckdb.DuckDBPyConnection, tmp_path: Path) -> None:
+    with pytest.raises(SourceError, match="no coincide con ningún fichero"):
+        create_views(conn, {"t": SourceSpec(path="*.parquet")}, tmp_path)
+
+
 # ---------------------------------------------------------------------------
 # Suite.run end-to-end
 # ---------------------------------------------------------------------------

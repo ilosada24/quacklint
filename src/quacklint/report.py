@@ -28,7 +28,7 @@ def build_table(results: Sequence[CheckResult], sample_size: int = 3) -> Table:
     table.add_column("filas", justify="right")
     table.add_column("detalle", overflow="fold")
     for result in results:
-        estado = "[green]PASS[/green]" if result.passed else "[red]FAIL[/red]"
+        estado = "[green]PASS[/green]" if result.passed else _fail_estado(result)
         table.add_row(
             estado,
             result.source,
@@ -37,6 +37,13 @@ def build_table(results: Sequence[CheckResult], sample_size: int = 3) -> Table:
             escape(_detail(result, sample_size)),
         )
     return table
+
+
+def _fail_estado(result: CheckResult) -> str:
+    """Etiqueta de estado de un check fallido: WARN (amarillo) o FAIL (rojo)."""
+    if result.severity == "warn":
+        return "[yellow]WARN[/yellow]"
+    return "[red]FAIL[/red]"
 
 
 def _detail(result: CheckResult, sample_size: int) -> str:
@@ -58,14 +65,17 @@ def _detail(result: CheckResult, sample_size: int) -> str:
 def render_json(results: Sequence[CheckResult]) -> str:
     """Informe JSON estable para consumo programático."""
     failed = sum(1 for result in results if not result.passed)
+    errors = sum(1 for result in results if not result.passed and result.severity == "error")
     payload = {
-        "passed": failed == 0,
+        "passed": errors == 0,
         "total": len(results),
         "failed": failed,
+        "errors": errors,
         "checks": [
             {
                 "check": result.check,
                 "source": result.source,
+                "severity": result.severity,
                 "passed": result.passed,
                 "failed_rows": result.failed_rows,
                 "message": result.message,
@@ -81,13 +91,18 @@ def render_json(results: Sequence[CheckResult]) -> str:
 
 
 def render_junit(results: Sequence[CheckResult]) -> str:
-    """Informe JUnit XML: un testcase por check, para plataformas de CI."""
-    failed = sum(1 for result in results if not result.passed)
+    """Informe JUnit XML: un testcase por check, para plataformas de CI.
+
+    Solo los checks fallidos con `severity: error` cuentan como `<failure>` (los
+    que hacen fallar la build). Un check `warn` fallido se reporta con
+    `<system-out>` para no bloquear el CI.
+    """
+    errors = sum(1 for result in results if not result.passed and result.severity == "error")
     suite = ElementTree.Element(
         "testsuite",
         name="quacklint",
         tests=str(len(results)),
-        failures=str(failed),
+        failures=str(errors),
         errors="0",
     )
     for result in results:
@@ -96,7 +111,11 @@ def render_junit(results: Sequence[CheckResult]) -> str:
         )
         if not result.passed:
             message = result.message or f"{result.failed_rows} fila(s) violan la regla"
-            ElementTree.SubElement(case, "failure", message=message)
+            if result.severity == "warn":
+                out = ElementTree.SubElement(case, "system-out")
+                out.text = f"advertencia: {message}"
+            else:
+                ElementTree.SubElement(case, "failure", message=message)
     ElementTree.indent(suite)
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + ElementTree.tostring(
         suite, encoding="unicode"

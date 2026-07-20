@@ -235,7 +235,11 @@ class FreshnessCheck(Check):
         row = self._fetchone(conn, self.to_sql(self.source))
         if row is None:
             return CheckResult(
-                check=self.display_name, source=self.source, passed=True, failed_rows=0
+                check=self.display_name,
+                source=self.source,
+                passed=True,
+                failed_rows=0,
+                severity=self.severity,
             )
         return CheckResult(
             check=self.display_name,
@@ -246,6 +250,7 @@ class FreshnessCheck(Check):
                 f"el valor más reciente de '{self.column}' es {row[0]}; "
                 f"supera la edad máxima ({format_duration(self.max_age)})"
             ),
+            severity=self.severity,
         )
 
 
@@ -289,7 +294,11 @@ class RowCountCheck(Check):
         row = self._fetchone(conn, self.to_sql(self.source))
         if row is None:
             return CheckResult(
-                check=self.display_name, source=self.source, passed=True, failed_rows=0
+                check=self.display_name,
+                source=self.source,
+                passed=True,
+                failed_rows=0,
+                severity=self.severity,
             )
         return CheckResult(
             check=self.display_name,
@@ -297,6 +306,7 @@ class RowCountCheck(Check):
             passed=False,
             failed_rows=1,
             message=f"la fuente tiene {int(row[0])} fila(s); se esperaba {self._expected()}",
+            severity=self.severity,
         )
 
     def _expected(self) -> str:

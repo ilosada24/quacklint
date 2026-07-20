@@ -162,6 +162,24 @@ def test_run_fail_fast_stops_at_first_failure(failing_suite: Path) -> None:
     assert "0/1 checks OK" in result.output
 
 
+def test_run_fail_fast_does_not_stop_on_warning(tmp_path: Path) -> None:
+    """Un warn fallido no corta --fail-fast; sigue hasta el primer error."""
+    _write_parquet(
+        tmp_path / "trips.parquet",
+        "SELECT * FROM (VALUES ('a', 1), ('a', 2), (NULL, 3)) AS v(trip_id, n)",
+    )
+    suite = _write_suite(
+        tmp_path,
+        "    - unique: {columns: [trip_id], severity: warn}\n"  # falla (warn) primero
+        "    - not_null: trip_id",  # falla (error): aquí debe cortar
+    )
+    result = runner.invoke(app, ["run", str(suite), "--fail-fast"])
+    assert result.exit_code == 1
+    assert "WARN" in result.output  # la advertencia se ejecutó y se reportó
+    assert "not_null" in result.output  # siguió hasta el error
+    assert "0/2 checks OK, 1 advertencia(s)" in result.output
+
+
 # ---------------------------------------------------------------------------
 # errores de configuración → exit 2
 # ---------------------------------------------------------------------------
@@ -200,3 +218,101 @@ def test_version() -> None:
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
     assert "quacklint" in result.output
+
+
+# ---------------------------------------------------------------------------
+# severity: warn
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def warn_only_suite(tmp_path: Path) -> Path:
+    """El único check que falla (unique) está marcado como severity: warn."""
+    _write_parquet(
+        tmp_path / "trips.parquet",
+        "SELECT * FROM (VALUES ('a', 1), ('a', 2)) AS v(trip_id, n)",
+    )
+    return _write_suite(
+        tmp_path,
+        "    - unique: {columns: [trip_id], severity: warn}\n"
+        "    - row_count: {min: 1}",
+    )
+
+
+def test_run_warn_only_exits_0_and_shows_warn(warn_only_suite: Path) -> None:
+    result = runner.invoke(app, ["run", str(warn_only_suite)])
+    assert result.exit_code == 0
+    assert "WARN" in result.output
+    assert "FAIL" not in result.output
+    assert "1 advertencia(s)" in result.output
+
+
+def test_run_warn_plus_error_exits_1(tmp_path: Path) -> None:
+    _write_parquet(
+        tmp_path / "trips.parquet",
+        "SELECT * FROM (VALUES ('a', 1), ('a', 2), (NULL, 3)) AS v(trip_id, n)",
+    )
+    suite = _write_suite(
+        tmp_path,
+        "    - unique: {columns: [trip_id], severity: warn}\n"
+        "    - not_null: trip_id",
+    )
+    result = runner.invoke(app, ["run", str(suite)])
+    assert result.exit_code == 1
+    assert "WARN" in result.output
+    assert "FAIL" in result.output
+
+
+def test_run_warn_json_passed_true_and_severity(warn_only_suite: Path) -> None:
+    result = runner.invoke(app, ["run", str(warn_only_suite), "-f", "json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["passed"] is True  # solo falla un warn -> no cuenta como error
+    assert payload["failed"] == 1
+    assert payload["errors"] == 0
+    by_check = {item["check"]: item for item in payload["checks"]}
+    assert by_check["unique"]["severity"] == "warn"
+    assert by_check["unique"]["passed"] is False
+
+
+def test_run_warn_junit_excludes_from_failures(warn_only_suite: Path) -> None:
+    result = runner.invoke(app, ["run", str(warn_only_suite), "-f", "junit"])
+    assert result.exit_code == 0
+    assert 'failures="0"' in result.output
+    assert "<failure" not in result.output
+    assert "system-out" in result.output
+
+
+# ---------------------------------------------------------------------------
+# descubrimiento por defecto de ./quacklint.yaml
+# ---------------------------------------------------------------------------
+
+
+def test_run_defaults_to_quacklint_yaml(
+    passing_suite: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    default = passing_suite.parent / "quacklint.yaml"
+    default.write_text(passing_suite.read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.chdir(passing_suite.parent)
+    result = runner.invoke(app, ["run"])
+    assert result.exit_code == 0
+    assert "3/3 checks OK" in result.output
+
+
+def test_validate_defaults_to_quacklint_yaml(
+    passing_suite: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    default = passing_suite.parent / "quacklint.yaml"
+    default.write_text(passing_suite.read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.chdir(passing_suite.parent)
+    result = runner.invoke(app, ["validate"])
+    assert result.exit_code == 0
+    assert "OK:" in result.output
+
+
+def test_run_no_arg_no_default_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["run"])
+    assert result.exit_code == 2
