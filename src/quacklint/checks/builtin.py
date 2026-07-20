@@ -209,8 +209,11 @@ class FreshnessCheck(Check):
     ```
 
     `max_age` is a duration (`s`, `m`, `h`, `d`) and the time reference is
-    DuckDB's `now()` at run time. If the source is empty or the column is all
-    NULL, the check passes (use `row_count` and `not_null` for those).
+    DuckDB's `now()` at run time. Comparisons run with the session time zone
+    pinned to UTC, and the column is cast to `TIMESTAMPTZ`, so the verdict does
+    not depend on the host time zone (a tz-naive column is read as UTC). If the
+    source is empty or the column is all NULL, the check passes (use
+    `row_count` and `not_null` for those).
     """
 
     def __init__(self, source: str, column: str, max_age: timedelta) -> None:
@@ -226,9 +229,12 @@ class FreshnessCheck(Check):
     def to_sql(self, source: str) -> str:
         col = quote_ident(self.column)
         seconds = int(self.max_age.total_seconds())
+        # Cast to TIMESTAMPTZ so a tz-naive column and now() (TIMESTAMPTZ) are
+        # compared as instants instead of via an implicit, session-tz-dependent
+        # cast. The session tz is pinned to UTC in Suite.run for reproducibility.
         return (
             f"SELECT CAST(max({col}) AS VARCHAR) AS most_recent FROM {quote_ident(source)} "
-            f"HAVING max({col}) < now() - INTERVAL '{seconds} seconds'"
+            f"HAVING max({col})::TIMESTAMPTZ < now() - INTERVAL '{seconds} seconds'"
         )
 
     def evaluate(self, conn: duckdb.DuckDBPyConnection) -> CheckResult:

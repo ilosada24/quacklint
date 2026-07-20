@@ -120,13 +120,16 @@ The most recent value of the column is not older than max_age.
 ```
 
 `max_age` is a duration (`s`, `m`, `h`, `d`) and the time reference is
-DuckDB's `now()` at run time. If the source is empty or the column is all
-NULL, the check passes (use `row_count` and `not_null` for those).
+DuckDB's `now()` at run time. Comparisons run with the session time zone
+pinned to UTC, and the column is cast to `TIMESTAMPTZ`, so the verdict does
+not depend on the host time zone (a tz-naive column is read as UTC). If the
+source is empty or the column is all NULL, the check passes (use
+`row_count` and `not_null` for those).
 
 Generated SQL (example):
 
 ```sql
-SELECT CAST(max("pickup_ts") AS VARCHAR) AS most_recent FROM "trips" HAVING max("pickup_ts") < now() - INTERVAL '86400 seconds'
+SELECT CAST(max("pickup_ts") AS VARCHAR) AS most_recent FROM "trips" HAVING max("pickup_ts")::TIMESTAMPTZ < now() - INTERVAL '86400 seconds'
 ```
 
 ## row_count

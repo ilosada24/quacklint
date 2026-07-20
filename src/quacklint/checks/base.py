@@ -99,8 +99,10 @@ class Check(ABC):
     ) -> tuple[tuple[str, ...], tuple[tuple[object, ...], ...]]:
         # COLUMNS(*)::VARCHAR: values come back as text, avoiding DuckDB→Python
         # type conversions (e.g. TIMESTAMPTZ requires pytz).
+        # ORDER BY ALL makes the sampled rows deterministic across runs.
         sample_sql = (
-            f"SELECT COLUMNS(*)::VARCHAR FROM ({sql}) AS violations LIMIT {self.sample_limit}"
+            f"SELECT COLUMNS(*)::VARCHAR FROM ({sql}) AS violations "
+            f"ORDER BY ALL LIMIT {self.sample_limit}"
         )
         try:
             cursor = conn.execute(sample_sql)

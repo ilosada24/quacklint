@@ -25,13 +25,49 @@ from pydantic import (
 
 from quacklint.checks.base import CheckResult, Severity, build_check
 from quacklint.errors import SpecError
-from quacklint.sources import create_views, view_columns
+from quacklint.sources import create_views, view_column_types
 
 SUPPORTED_VERSION: Final = 1
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _DURATION_RE = re.compile(r"^(?P<value>\d+)(?P<unit>[smhd])$")
 _DURATION_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+# Column-type categories that some checks require (validated before running).
+ColumnCategory = Literal["numeric", "temporal", "string"]
+
+_NUMERIC_TYPES = frozenset(
+    {
+        "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT",
+        "UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT", "UHUGEINT",
+        "FLOAT", "REAL", "DOUBLE", "DECIMAL",
+    }
+)
+_TEMPORAL_TYPES = frozenset(
+    {"DATE", "TIME", "TIMETZ", "TIMESTAMP", "TIMESTAMPTZ", "DATETIME"}
+)
+_STRING_TYPES = frozenset({"VARCHAR", "CHAR", "BPCHAR", "TEXT", "STRING"})
+
+_CATEGORY_LABEL: dict[ColumnCategory, str] = {
+    "numeric": "numeric",
+    "temporal": "temporal (DATE/TIME/TIMESTAMP)",
+    "string": "text (VARCHAR)",
+}
+
+
+def _type_category(duckdb_type: str) -> ColumnCategory | None:
+    """Classify a DuckDB type string into a category, or None if unknown."""
+    upper = duckdb_type.upper()
+    if "WITH TIME ZONE" in upper or upper.startswith("TIMESTAMP_"):
+        return "temporal"
+    base = upper.split("(", 1)[0].strip()
+    if base in _NUMERIC_TYPES:
+        return "numeric"
+    if base in _TEMPORAL_TYPES:
+        return "temporal"
+    if base in _STRING_TYPES:
+        return "string"
+    return None
 
 
 def parse_duration(raw: str) -> timedelta:
@@ -77,6 +113,10 @@ class BaseCheckSpec(BaseModel):
 
     def referenced_columns(self) -> tuple[str, ...]:
         """Source columns the check references (validated against the schema)."""
+        return ()
+
+    def required_column_types(self) -> tuple[tuple[str, ColumnCategory], ...]:
+        """(column, category) pairs whose type is validated before running."""
         return ()
 
 
@@ -142,6 +182,9 @@ class RangeSpec(BaseCheckSpec):
     def referenced_columns(self) -> tuple[str, ...]:
         return (self.column,)
 
+    def required_column_types(self) -> tuple[tuple[str, ColumnCategory], ...]:
+        return ((self.column, "numeric"),)
+
 
 class RegexMatchSpec(BaseCheckSpec):
     check_type: ClassVar[str] = "regex_match"
@@ -160,6 +203,9 @@ class RegexMatchSpec(BaseCheckSpec):
 
     def referenced_columns(self) -> tuple[str, ...]:
         return (self.column,)
+
+    def required_column_types(self) -> tuple[tuple[str, ColumnCategory], ...]:
+        return ((self.column, "string"),)
 
 
 class RowCountSpec(BaseCheckSpec):
@@ -194,6 +240,9 @@ class FreshnessSpec(BaseCheckSpec):
 
     def referenced_columns(self) -> tuple[str, ...]:
         return (self.column,)
+
+    def required_column_types(self) -> tuple[tuple[str, ColumnCategory], ...]:
+        return ((self.column, "temporal"),)
 
 
 class CustomSqlSpec(BaseCheckSpec):
@@ -403,6 +452,9 @@ class Suite:
 
         conn = duckdb.connect()
         try:
+            # Pin the session time zone so temporal comparisons (freshness) are
+            # reproducible regardless of the host time zone.
+            conn.execute("SET TimeZone='UTC'")
             create_views(conn, self.spec.sources, self.base_dir)
             self._check_referenced_columns(conn)
             results: list[CheckResult] = []
@@ -417,11 +469,15 @@ class Suite:
             conn.close()
 
     def _check_referenced_columns(self, conn: duckdb.DuckDBPyConnection) -> None:
-        """A nonexistent column is a configuration error, not a check failure."""
+        """A nonexistent column or wrong column type is a configuration error,
+        not a check failure: both are validated against the real schema before
+        anything runs."""
         for source_name, entries in self.spec.checks.items():
-            available = view_columns(conn, source_name)
+            types = view_column_types(conn, source_name)
+            available = list(types)
             known = set(available)
             for index, check_spec in enumerate(entries):
+                location = f"checks.{source_name}[{index}] ({check_spec.check_type})"
                 missing = [
                     column
                     for column in check_spec.referenced_columns()
@@ -429,7 +485,15 @@ class Suite:
                 ]
                 if missing:
                     raise SpecError(
-                        f"checks.{source_name}[{index}] ({check_spec.check_type}): "
+                        f"{location}: "
                         f"nonexistent column(s) in '{source_name}': {', '.join(missing)}. "
                         f"Available columns: {', '.join(available)}"
                     )
+                for column, category in check_spec.required_column_types():
+                    actual = types[column]
+                    if _type_category(actual) != category:
+                        raise SpecError(
+                            f"{location}: column '{column}' has type {actual}, but "
+                            f"{check_spec.check_type} requires a "
+                            f"{_CATEGORY_LABEL[category]} column"
+                        )

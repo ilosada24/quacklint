@@ -71,7 +71,11 @@ rows. Data is never loaded into Python to validate.
 
 Referencing a column that does not exist in the source is a **configuration
 error** (exit code 2), not a check failure: it is validated against the real
-schema before anything runs.
+schema before anything runs. The same applies to a column of the wrong type for
+a check that needs a specific one — `range` requires a numeric column,
+`freshness` a temporal one (DATE/TIME/TIMESTAMP), and `regex_match` a text
+(VARCHAR) column — you get an actionable error naming the column and its actual
+type, never a raw engine error.
 
 #### `severity`
 
@@ -175,6 +179,10 @@ relative to run time.
 
 - `max_age` is a **duration** (see below). The time reference is DuckDB's
   `now()` at run time.
+- The column must be a **temporal** type (DATE/TIME/TIMESTAMP).
+- Comparisons run with the session time zone pinned to **UTC** and the column
+  cast to `TIMESTAMPTZ`, so the verdict is reproducible regardless of the host
+  time zone; a tz-naive column is read as UTC.
 - If the source is empty or the column is all `NULL`, the check **passes** (use
   `row_count` and `not_null` to require data).
 
