@@ -1,7 +1,7 @@
-"""Checks incorporados del contrato (docs/spec.yaml.md).
+"""Built-in checks from the contract (docs/spec.yaml.md).
 
-Implementados: not_null, unique, row_count, accepted_values, range,
-regex_match, freshness y custom_sql.
+Implemented: not_null, unique, row_count, accepted_values, range,
+regex_match, freshness and custom_sql.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 
 def _sql_literal(value: str | int | float | bool) -> str:
-    """Convierte un escalar del YAML en un literal SQL de DuckDB."""
+    """Turn a scalar from the YAML into a DuckDB SQL literal."""
     if isinstance(value, bool):
         return "TRUE" if value else "FALSE"
     if isinstance(value, int | float):
@@ -39,14 +39,14 @@ def _sql_literal(value: str | int | float | bool) -> str:
 
 @register("not_null")
 class NotNullCheck(Check):
-    """Las columnas indicadas no contienen NULL.
+    """The given columns contain no NULL.
 
     ```yaml
     - not_null: [trip_id, pickup_ts]
-    - not_null: trip_id            # forma abreviada: una sola columna
+    - not_null: trip_id            # shorthand: a single column
     ```
 
-    Cada fila con NULL en alguna de las columnas cuenta como una violación.
+    Each row with a NULL in any of the columns counts as one violation.
     """
 
     def __init__(self, source: str, columns: list[str]) -> None:
@@ -65,15 +65,15 @@ class NotNullCheck(Check):
 
 @register("unique")
 class UniqueCheck(Check):
-    """Sin duplicados en la columna o combinación de columnas.
+    """No duplicates in the column or combination of columns.
 
     ```yaml
-    - unique: trip_id              # forma abreviada: una columna
-    - unique: [trip_id, pickup_ts] # clave compuesta
+    - unique: trip_id              # shorthand: a single column
+    - unique: [trip_id, pickup_ts] # composite key
     ```
 
-    Las filas con NULL en alguna de las columnas se ignoran (para exigir no
-    nulos está `not_null`). Cada clave duplicada cuenta como una violación.
+    Rows with a NULL in any of the columns are ignored (use `not_null` to
+    require non-nulls). Each duplicated key counts as one violation.
     """
 
     def __init__(self, source: str, columns: list[str]) -> None:
@@ -96,7 +96,7 @@ class UniqueCheck(Check):
 
 @register("accepted_values")
 class AcceptedValuesCheck(Check):
-    """Todos los valores no nulos de la columna pertenecen al conjunto dado.
+    """Every non-null value of the column belongs to the given set.
 
     ```yaml
     - accepted_values:
@@ -104,8 +104,8 @@ class AcceptedValuesCheck(Check):
         values: [card, cash]
     ```
 
-    `values` acepta escalares str/int/float/bool. Los NULL no cuentan como
-    violación.
+    `values` accepts str/int/float/bool scalars. NULLs do not count as a
+    violation.
     """
 
     def __init__(self, source: str, column: str, values: list[str | int | float | bool]) -> None:
@@ -129,22 +129,22 @@ class AcceptedValuesCheck(Check):
 
 @register("range")
 class RangeCheck(Check):
-    """Los valores no nulos de la columna están dentro de [min, max] (inclusive).
+    """The non-null values of the column are within [min, max] (inclusive).
 
     ```yaml
     - range: {column: fare, min: 0, max: 1000}
-    - range: {column: fare, min: 0}    # solo cota inferior
+    - range: {column: fare, min: 0}    # lower bound only
     ```
 
-    Al menos uno de `min` / `max` es obligatorio. Los NULL no cuentan como
-    violación.
+    At least one of `min` / `max` is required. NULLs do not count as a
+    violation.
     """
 
     def __init__(
         self, source: str, column: str, min_value: float | None, max_value: float | None
     ) -> None:
         if min_value is None and max_value is None:
-            raise ValueError("range necesita al menos min o max")
+            raise ValueError("range needs at least min or max")
         super().__init__(source)
         self.column = column
         self.min_value = min_value
@@ -170,15 +170,15 @@ class RangeCheck(Check):
 
 @register("regex_match")
 class RegexMatchCheck(Check):
-    """Todos los valores no nulos de la columna casan (completos) con el patrón.
+    """Every non-null value of the column fully matches the pattern.
 
     ```yaml
     - regex_match: {column: trip_id, pattern: 't-[0-9]{3}'}
     ```
 
-    Usa `regexp_full_match` de DuckDB (sintaxis RE2): el patrón debe casar
-    con el valor completo; añade `.*` para búsquedas parciales. El patrón se
-    valida al cargar la suite. Los NULL no cuentan como violación.
+    Uses DuckDB's `regexp_full_match` (RE2 syntax): the pattern must match the
+    whole value; add `.*` for partial searches. The pattern is validated when
+    the suite is loaded. NULLs do not count as a violation.
     """
 
     def __init__(self, source: str, column: str, pattern: str) -> None:
@@ -202,15 +202,15 @@ class RegexMatchCheck(Check):
 
 @register("freshness")
 class FreshnessCheck(Check):
-    """El valor más reciente de la columna no es más antiguo que max_age.
+    """The most recent value of the column is not older than max_age.
 
     ```yaml
     - freshness: {column: pickup_ts, max_age: 24h}
     ```
 
-    `max_age` es una duración (`s`, `m`, `h`, `d`) y la referencia temporal
-    es el `now()` de DuckDB al ejecutar. Si la fuente está vacía o la columna
-    es toda NULL, el check pasa (para eso están `row_count` y `not_null`).
+    `max_age` is a duration (`s`, `m`, `h`, `d`) and the time reference is
+    DuckDB's `now()` at run time. If the source is empty or the column is all
+    NULL, the check passes (use `row_count` and `not_null` for those).
     """
 
     def __init__(self, source: str, column: str, max_age: timedelta) -> None:
@@ -247,8 +247,8 @@ class FreshnessCheck(Check):
             passed=False,
             failed_rows=1,
             message=(
-                f"el valor más reciente de '{self.column}' es {row[0]}; "
-                f"supera la edad máxima ({format_duration(self.max_age)})"
+                f"the most recent value of '{self.column}' is {row[0]}; "
+                f"exceeds the max age ({format_duration(self.max_age)})"
             ),
             severity=self.severity,
         )
@@ -256,20 +256,20 @@ class FreshnessCheck(Check):
 
 @register("row_count")
 class RowCountCheck(Check):
-    """El número de filas de la fuente está dentro de [min, max] (inclusive).
+    """The source's row count is within [min, max] (inclusive).
 
     ```yaml
     - row_count: {min: 1}
     - row_count: {min: 100, max: 100000}
     ```
 
-    Al menos uno de `min` / `max` es obligatorio (enteros >= 0). No referencia
-    columnas: opera sobre la fuente completa.
+    At least one of `min` / `max` is required (integers >= 0). It references no
+    columns: it operates on the whole source.
     """
 
     def __init__(self, source: str, min_rows: int | None, max_rows: int | None) -> None:
         if min_rows is None and max_rows is None:
-            raise ValueError("row_count necesita al menos min o max")
+            raise ValueError("row_count needs at least min or max")
         super().__init__(source)
         self.min_rows = min_rows
         self.max_rows = max_rows
@@ -305,21 +305,21 @@ class RowCountCheck(Check):
             source=self.source,
             passed=False,
             failed_rows=1,
-            message=f"la fuente tiene {int(row[0])} fila(s); se esperaba {self._expected()}",
+            message=f"the source has {int(row[0])} row(s); expected {self._expected()}",
             severity=self.severity,
         )
 
     def _expected(self) -> str:
         if self.min_rows is not None and self.max_rows is not None:
-            return f"entre {self.min_rows} y {self.max_rows}"
+            return f"between {self.min_rows} and {self.max_rows}"
         if self.min_rows is not None:
-            return f"al menos {self.min_rows}"
-        return f"como mucho {self.max_rows}"
+            return f"at least {self.min_rows}"
+        return f"at most {self.max_rows}"
 
 
 @register("custom_sql")
 class CustomSqlCheck(Check):
-    """Consulta SQL arbitraria cuyas filas resultantes son las violaciones.
+    """Arbitrary SQL query whose result rows are the violations.
 
     ```yaml
     - custom_sql:
@@ -327,9 +327,9 @@ class CustomSqlCheck(Check):
         query: SELECT * FROM trips WHERE dropoff_ts < pickup_ts
     ```
 
-    La consulta puede referenciar cualquier fuente por su nombre de vista y
-    en los informes el check se reporta con su `name`. Un `;` final se
-    elimina automáticamente; debe ser un único SELECT.
+    The query can reference any source by its view name, and in reports the
+    check is reported under its `name`. A trailing `;` is stripped
+    automatically; it must be a single SELECT.
     """
 
     def __init__(self, source: str, check_name: str, query: str) -> None:

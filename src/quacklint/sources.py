@@ -1,4 +1,4 @@
-"""Resolución de rutas de fuentes a vistas DuckDB."""
+"""Resolving source paths to DuckDB views."""
 
 from __future__ import annotations
 
@@ -26,18 +26,18 @@ _GLOB_CHARS = ("*", "?", "[")
 
 
 def _is_glob(pattern: str) -> bool:
-    """True si la ruta es un patrón glob (contiene '*', '?' o '[')."""
+    """True if the path is a glob pattern (contains '*', '?' or '[')."""
     return any(char in pattern for char in _GLOB_CHARS)
 
 
 def _reader_for(name: str, path: Path) -> str:
-    """Selecciona el lector DuckDB según la extensión de la ruta (o patrón)."""
+    """Select the DuckDB reader based on the path (or pattern) extension."""
     reader = _READERS.get(path.suffix.lower())
     if reader is None:
         supported = ", ".join(sorted(_READERS))
         raise SourceError(
-            f"fuente '{name}': extensión no soportada '{path.suffix}'. "
-            f"Extensiones soportadas: {supported}"
+            f"source '{name}': unsupported extension '{path.suffix}'. "
+            f"Supported extensions: {supported}"
         )
     return reader
 
@@ -47,11 +47,11 @@ def create_views(
     sources: Mapping[str, SourceSpec],
     base_dir: Path,
 ) -> None:
-    """Crea una vista DuckDB por fuente para que los checks la consulten por nombre.
+    """Create one DuckDB view per source so checks can query it by name.
 
-    Las rutas relativas se resuelven respecto al directorio del fichero de suite.
-    Un `path` puede ser un patrón glob (`data/*.parquet`): DuckDB lee todos los
-    ficheros que casen; debe casar al menos uno.
+    Relative paths are resolved against the suite file's directory. A `path`
+    may be a glob pattern (`data/*.parquet`): DuckDB reads every matching file;
+    it must match at least one.
     """
     for name, spec in sources.items():
         path = Path(spec.path)
@@ -60,10 +60,10 @@ def create_views(
         if _is_glob(spec.path):
             if not globlib.glob(str(path), recursive=True):
                 raise SourceError(
-                    f"fuente '{name}': el patrón {path} no coincide con ningún fichero"
+                    f"source '{name}': pattern {path} matches no files"
                 )
         elif not path.exists():
-            raise SourceError(f"fuente '{name}': no existe el fichero {path}")
+            raise SourceError(f"source '{name}': file {path} does not exist")
         reader = _reader_for(name, path)
         escaped = str(path).replace("'", "''")
         conn.execute(
@@ -72,6 +72,6 @@ def create_views(
 
 
 def view_columns(conn: duckdb.DuckDBPyConnection, name: str) -> list[str]:
-    """Columnas de una vista/tabla DuckDB, en su orden de definición."""
+    """Columns of a DuckDB view/table, in definition order."""
     rows = conn.execute(f"DESCRIBE {quote_ident(name)}").fetchall()
     return [str(row[0]) for row in rows]

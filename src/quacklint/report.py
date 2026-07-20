@@ -1,4 +1,4 @@
-"""Render de resultados de checks: table (rich), json y junit."""
+"""Rendering of check results: table (rich), json and junit."""
 
 from __future__ import annotations
 
@@ -20,17 +20,17 @@ class ReportFormat(StrEnum):
 
 
 def build_table(results: Sequence[CheckResult], sample_size: int = 3) -> Table:
-    """Tabla rich con un check por fila y muestra de filas fallidas en el detalle."""
+    """Rich table with one check per row and a sample of failing rows in the detail."""
     table = Table()
-    table.add_column("estado")
-    table.add_column("fuente")
+    table.add_column("status")
+    table.add_column("source")
     table.add_column("check")
-    table.add_column("filas", justify="right")
-    table.add_column("detalle", overflow="fold")
+    table.add_column("rows", justify="right")
+    table.add_column("detail", overflow="fold")
     for result in results:
-        estado = "[green]PASS[/green]" if result.passed else _fail_estado(result)
+        status = "[green]PASS[/green]" if result.passed else _fail_status(result)
         table.add_row(
-            estado,
+            status,
             result.source,
             result.check,
             str(result.failed_rows),
@@ -39,8 +39,8 @@ def build_table(results: Sequence[CheckResult], sample_size: int = 3) -> Table:
     return table
 
 
-def _fail_estado(result: CheckResult) -> str:
-    """Etiqueta de estado de un check fallido: WARN (amarillo) o FAIL (rojo)."""
+def _fail_status(result: CheckResult) -> str:
+    """Status label of a failed check: WARN (yellow) or FAIL (red)."""
     if result.severity == "warn":
         return "[yellow]WARN[/yellow]"
     return "[red]FAIL[/red]"
@@ -58,12 +58,12 @@ def _detail(result: CheckResult, sample_size: int) -> str:
             )
             for row in result.sample_rows[:sample_size]
         )
-        lines.append(f"muestra: {sample}")
+        lines.append(f"sample: {sample}")
     return "\n".join(lines)
 
 
 def render_json(results: Sequence[CheckResult]) -> str:
-    """Informe JSON estable para consumo programático."""
+    """Stable JSON report for programmatic consumption."""
     failed = sum(1 for result in results if not result.passed)
     errors = sum(1 for result in results if not result.passed and result.severity == "error")
     payload = {
@@ -91,11 +91,11 @@ def render_json(results: Sequence[CheckResult]) -> str:
 
 
 def render_junit(results: Sequence[CheckResult]) -> str:
-    """Informe JUnit XML: un testcase por check, para plataformas de CI.
+    """JUnit XML report: one testcase per check, for CI platforms.
 
-    Solo los checks fallidos con `severity: error` cuentan como `<failure>` (los
-    que hacen fallar la build). Un check `warn` fallido se reporta con
-    `<system-out>` para no bloquear el CI.
+    Only failed checks with `severity: error` count as a `<failure>` (the ones
+    that break the build). A failed `warn` check is reported with `<system-out>`
+    so it does not block CI.
     """
     errors = sum(1 for result in results if not result.passed and result.severity == "error")
     suite = ElementTree.Element(
@@ -110,10 +110,10 @@ def render_junit(results: Sequence[CheckResult]) -> str:
             suite, "testcase", classname=result.source, name=result.check
         )
         if not result.passed:
-            message = result.message or f"{result.failed_rows} fila(s) violan la regla"
+            message = result.message or f"{result.failed_rows} row(s) violate the rule"
             if result.severity == "warn":
                 out = ElementTree.SubElement(case, "system-out")
-                out.text = f"advertencia: {message}"
+                out.text = f"warning: {message}"
             else:
                 ElementTree.SubElement(case, "failure", message=message)
     ElementTree.indent(suite)

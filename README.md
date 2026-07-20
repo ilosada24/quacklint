@@ -1,49 +1,49 @@
 # quacklint 🦆
 
-**Data quality declarativo para DuckDB.** Describe tus reglas en un YAML;
-quacklint las compila a SQL y las ejecuta directamente sobre tus ficheros
-Parquet/CSV/JSON. Sin pandas, sin servicios, hecho para CI.
+**Declarative data quality for DuckDB.** Describe your rules in a YAML;
+quacklint compiles them to SQL and runs them directly over your Parquet/CSV/JSON
+files. No pandas, no services, built for CI.
 
-## El problema
+## The problem
 
-Los checks de calidad de datos suelen acabar como scripts ad hoc de pandas:
-lentos, imperativos, difíciles de revisar en un PR y acoplados al entorno de
-quien los escribió. quacklint apuesta por lo contrario:
+Data quality checks often end up as ad hoc pandas scripts: slow, imperative,
+hard to review in a PR and coupled to whoever wrote them. quacklint bets on the
+opposite:
 
-- **Declarativo** — la suite YAML dice *qué* debe cumplirse, no *cómo*
-  comprobarlo, y se revisa en un PR igual que el código.
-- **SQL primero** — cada check compila a una consulta DuckDB que devuelve las
-  filas que violan la regla (0 filas = pasa). Los datos nunca se cargan a
-  Python; DuckDB lee Parquet/CSV/JSON directamente y en paralelo.
-- **Hecho para CI** — códigos de salida estables, informes `table`/`json`/
-  `junit`, y errores de configuración accionables (nunca tracebacks).
+- **Declarative** — the YAML suite says *what* must hold, not *how* to check it,
+  and it's reviewed in a PR just like code.
+- **SQL first** — each check compiles to a DuckDB query that returns the rows
+  that violate the rule (0 rows = pass). Data is never loaded into Python;
+  DuckDB reads Parquet/CSV/JSON directly and in parallel.
+- **Built for CI** — stable exit codes, `table`/`json`/`junit` reports, and
+  actionable configuration errors (never tracebacks).
 
-Más sobre el porqué en [docs/philosophy.md](docs/philosophy.md).
+More on the why in [docs/philosophy.md](docs/philosophy.md).
 
-## Instalación
+## Installation
 
-Requiere Python 3.11+ y [uv](https://docs.astral.sh/uv/).
+Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 
-**Global (el comando `quacklint` disponible en cualquier carpeta):**
+**Global (the `quacklint` command available in any folder):**
 
 ```console
-$ uv tool install --editable /ruta/al/repo/quacklint
+$ uv tool install --editable /path/to/repo/quacklint
 $ quacklint --help
 ```
 
-- `--editable` hace que los cambios en el código del repo se reflejen sin
-  reinstalar (recomendado mientras el proyecto está en desarrollo activo);
-  quítalo si prefieres una copia congelada.
-- Si `uv` avisa de que `~/.local/bin` no está en tu PATH: `uv tool update-shell`.
-- Para actualizar o desinstalar: `uv tool upgrade quacklint` /
+- `--editable` makes changes to the repo's code take effect without
+  reinstalling (recommended while the project is in active development); drop it
+  if you prefer a frozen copy.
+- If `uv` warns that `~/.local/bin` is not on your PATH: `uv tool update-shell`.
+- To upgrade or uninstall: `uv tool upgrade quacklint` /
   `uv tool uninstall quacklint`.
 
-**Para desarrollar** (entorno del repo, sin instalar nada global): ver
-[Desarrollo](#desarrollo).
+**For development** (repo environment, without installing anything globally): see
+[Development](#development).
 
-## Quickstart en 30 segundos
+## 30-second quickstart
 
-Un CSV con problemas:
+A CSV with problems:
 
 ```csv
 # trips.csv
@@ -53,7 +53,7 @@ t-002,cash,9.0
 t-002,voucher,-3.0
 ```
 
-Una suite que declara las reglas:
+A suite that declares the rules:
 
 ```yaml
 # suite.yaml
@@ -69,100 +69,98 @@ checks:
     - range: {column: fare, min: 0}
 ```
 
-Y a correr:
+And run it:
 
 ```console
 $ quacklint run suite.yaml
-┏━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ estado ┃ fuente ┃ check           ┃ filas ┃ detalle                        ┃
-┡━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ PASS   │ trips  │ not_null        │     0 │                                │
-│ FAIL   │ trips  │ unique          │     1 │ 1 fila(s) violan la regla      │
-│        │        │                 │       │ muestra: trip_id=t-002,        │
-│        │        │                 │       │ occurrences=2                  │
-│ FAIL   │ trips  │ accepted_values │     1 │ 1 fila(s) violan la regla      │
-│        │        │                 │       │ muestra: trip_id=t-002,        │
-│        │        │                 │       │ payment_type=voucher,          │
-│        │        │                 │       │ fare=-3.0                      │
-│ FAIL   │ trips  │ range           │     1 │ 1 fila(s) violan la regla      │
-│        │        │                 │       │ muestra: trip_id=t-002,        │
-│        │        │                 │       │ payment_type=voucher,          │
-│        │        │                 │       │ fare=-3.0                      │
-└────────┴────────┴─────────────────┴───────┴────────────────────────────────┘
+┏━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ status ┃ source ┃ check           ┃ rows ┃ detail                            ┃
+┡━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ PASS   │ trips  │ not_null        │    0 │                                   │
+│ FAIL   │ trips  │ unique          │    1 │ 1 row(s) violate the rule         │
+│        │        │                 │      │ sample: trip_id=t-002,            │
+│        │        │                 │      │ occurrences=2                     │
+│ FAIL   │ trips  │ accepted_values │    1 │ 1 row(s) violate the rule         │
+│        │        │                 │      │ sample: trip_id=t-002,            │
+│        │        │                 │      │ payment_type=voucher, fare=-3.0   │
+│ FAIL   │ trips  │ range           │    1 │ 1 row(s) violate the rule         │
+│        │        │                 │      │ sample: trip_id=t-002,            │
+│        │        │                 │      │ payment_type=voucher, fare=-3.0   │
+└────────┴────────┴─────────────────┴──────┴───────────────────────────────────┘
 1/4 checks OK
 $ echo $?
 1
 ```
 
-Hay un ejemplo completo listo para ejecutar en [examples/taxi](examples/taxi).
+There's a complete, ready-to-run example in [examples/taxi](examples/taxi).
 
-## Checks disponibles
+## Available checks
 
-| Check             | Regla                                                               |
+| Check             | Rule                                                                |
 | ----------------- | ------------------------------------------------------------------- |
-| `not_null`        | Las columnas no contienen `NULL`.                                   |
-| `unique`          | Sin duplicados en la columna o combinación (los `NULL` se ignoran). |
-| `row_count`       | Número de filas dentro de `[min, max]` (inclusive).                 |
-| `accepted_values` | Todos los valores no nulos pertenecen a un conjunto dado.           |
-| `range`           | Valores numéricos no nulos dentro de `[min, max]` (inclusive).      |
-| `regex_match`     | Valores no nulos casan (completos) con una expresión regular RE2.   |
-| `freshness`       | El valor más reciente de una columna temporal no supera una edad.   |
-| `custom_sql`      | SQL arbitrario cuyas filas resultantes son violaciones.             |
+| `not_null`        | The columns contain no `NULL`.                                      |
+| `unique`          | No duplicates in the column or combination (`NULL`s are ignored).   |
+| `row_count`       | Row count within `[min, max]` (inclusive).                          |
+| `accepted_values` | Every non-null value belongs to a given set.                        |
+| `range`           | Non-null numeric values within `[min, max]` (inclusive).            |
+| `regex_match`     | Non-null values fully match an RE2 regular expression.              |
+| `freshness`       | The most recent value of a timestamp column is not older than an age. |
+| `custom_sql`      | Arbitrary SQL whose result rows are violations.                     |
 
-Sintaxis y SQL generado de cada uno:
-[docs/checks-reference.md](docs/checks-reference.md). El contrato completo del
-formato YAML: [docs/spec.yaml.md](docs/spec.yaml.md).
+Syntax and generated SQL for each:
+[docs/checks-reference.md](docs/checks-reference.md). The full YAML format
+contract: [docs/spec.yaml.md](docs/spec.yaml.md).
 
 ## CLI
 
 ```console
-$ quacklint validate suite.yaml          # valida sin tocar los datos
-$ quacklint run suite.yaml               # tabla rich con muestra de filas fallidas
-$ quacklint run suite.yaml -f json       # informe JSON
-$ quacklint run suite.yaml -f junit      # JUnit XML para CI
-$ quacklint run suite.yaml --explain     # imprime el SQL compilado, sin ejecutar
-$ quacklint run suite.yaml --fail-fast   # se detiene en el primer error (los warn no cortan)
-$ quacklint run                          # sin argumento: usa ./quacklint.yaml
+$ quacklint validate suite.yaml          # validate without touching the data
+$ quacklint run suite.yaml               # rich table with a sample of failing rows
+$ quacklint run suite.yaml -f json       # JSON report
+$ quacklint run suite.yaml -f junit      # JUnit XML for CI
+$ quacklint run suite.yaml --explain     # print the compiled SQL, without running
+$ quacklint run suite.yaml --fail-fast   # stop at the first error (warnings don't stop)
+$ quacklint run                          # no argument: uses ./quacklint.yaml
 ```
 
-El argumento de suite es opcional: si se omite, `run` y `validate` buscan
-`./quacklint.yaml` en el directorio actual.
+The suite argument is optional: if omitted, `run` and `validate` look for
+`./quacklint.yaml` in the current directory.
 
-Códigos de salida:
+Exit codes:
 
-| Código | Significado                                        |
-| ------ | -------------------------------------------------- |
-| 0      | Todos los checks pasan                             |
-| 1      | Hay checks fallidos                                |
-| 2      | Error de configuración (suite inválida, fuentes…)  |
+| Code | Meaning                                            |
+| ---- | -------------------------------------------------- |
+| 0    | All checks pass                                    |
+| 1    | There are failed checks                            |
+| 2    | Configuration error (invalid suite, sources…)      |
 
-Ejemplos de integración con GitHub Actions:
+GitHub Actions integration examples:
 [docs/ci-integration.md](docs/ci-integration.md).
 
-## Desarrollo
+## Development
 
 ```console
-$ uv sync                                              # deps (incluido grupo dev)
+$ uv sync                                              # deps (including the dev group)
 $ uv run pytest                                        # tests
 $ uv run ruff check                                    # lint
-$ uv run mypy                                          # tipos (strict)
-$ uv run python scripts/gen_checks_reference.py        # regenera docs/checks-reference.md
+$ uv run mypy                                          # types (strict)
+$ uv run python scripts/gen_checks_reference.py        # regenerate docs/checks-reference.md
 ```
 
-`docs/checks-reference.md` se genera desde los docstrings de
-[builtin.py](src/quacklint/checks/builtin.py); un test falla si queda
-desactualizado.
+`docs/checks-reference.md` is generated from the docstrings in
+[builtin.py](src/quacklint/checks/builtin.py); a test fails if it goes out of
+date.
 
-## Publicar en PyPI (pasos futuros)
+## Publishing to PyPI (future steps)
 
-El paquete ya se construye correctamente (`uv build` produce wheel y sdist).
-Para publicarlo quedaría:
+The package already builds correctly (`uv build` produces a wheel and sdist).
+To publish it, what remains is:
 
-1. Completar metadatos en `pyproject.toml`: `license = "MIT"` + fichero
-   `LICENSE`, `authors`, `keywords` y `classifiers`.
-2. Ensayo opcional en TestPyPI:
+1. Complete the metadata in `pyproject.toml`: `license = "MIT"` + a `LICENSE`
+   file, `authors`, `keywords` and `classifiers`.
+2. Optional dry run on TestPyPI:
    `uv publish --publish-url https://test.pypi.org/legacy/ --token ...`.
-3. Cuenta en [pypi.org](https://pypi.org) + API token, y publicar:
+3. An account on [pypi.org](https://pypi.org) + API token, and publish:
    `uv publish --token pypi-XXXX`.
-4. A partir de ahí la instalación pasa a ser `uv tool install quacklint`
-   (el nombre está libre en PyPI, verificado 2026-07-19).
+4. From then on installation becomes `uv tool install quacklint` (the name is
+   free on PyPI, verified 2026-07-19).

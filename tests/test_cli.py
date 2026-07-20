@@ -1,4 +1,4 @@
-"""Tests del CLI con CliRunner (typer.testing)."""
+"""CLI tests with CliRunner (typer.testing)."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def _write_suite(directory: Path, checks_yaml: str) -> Path:
 
 @pytest.fixture()
 def failing_suite(tmp_path: Path) -> Path:
-    """not_null falla (1 NULL), unique falla ('a' duplicado), row_count pasa."""
+    """not_null fails (1 NULL), unique fails ('a' duplicated), row_count passes."""
     _write_parquet(
         tmp_path / "trips.parquet",
         "SELECT * FROM (VALUES ('a', 1), ('a', 2), (NULL, 3)) AS v(trip_id, n)",
@@ -69,7 +69,7 @@ def passing_suite(tmp_path: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# run: tabla
+# run: table
 # ---------------------------------------------------------------------------
 
 
@@ -88,8 +88,8 @@ def test_run_table_reports_failures_exit_1(failing_suite: Path) -> None:
     assert "unique" in result.output
     assert "not_null" in result.output
     assert "1/3 checks OK" in result.output
-    # La tabla incluye filas de muestra de las violaciones.
-    assert "muestra" in result.output
+    # The table includes sample rows of the violations.
+    assert "sample" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +132,7 @@ def test_run_junit_output(failing_suite: Path) -> None:
 
 def test_run_explain_prints_sql_without_executing(failing_suite: Path) -> None:
     result = runner.invoke(app, ["run", str(failing_suite), "--explain"])
-    assert result.exit_code == 0  # no ejecuta, así que no hay checks fallidos
+    assert result.exit_code == 0  # nothing runs, so no failed checks
     assert "-- not_null (trips)" in result.output
     assert "-- unique (trips)" in result.output
     assert "IS NULL" in result.output
@@ -142,7 +142,7 @@ def test_run_explain_prints_sql_without_executing(failing_suite: Path) -> None:
 
 
 def test_run_explain_works_without_data_files(tmp_path: Path) -> None:
-    """--explain no toca las fuentes: compila aunque el fichero de datos no exista."""
+    """--explain doesn't touch the sources: it compiles even if the data file is missing."""
     suite_file = _write_suite(tmp_path, "    - unique: trip_id")
     result = runner.invoke(app, ["run", str(suite_file), "--explain"])
     assert result.exit_code == 0
@@ -163,25 +163,25 @@ def test_run_fail_fast_stops_at_first_failure(failing_suite: Path) -> None:
 
 
 def test_run_fail_fast_does_not_stop_on_warning(tmp_path: Path) -> None:
-    """Un warn fallido no corta --fail-fast; sigue hasta el primer error."""
+    """A failed warn doesn't stop --fail-fast; it continues to the first error."""
     _write_parquet(
         tmp_path / "trips.parquet",
         "SELECT * FROM (VALUES ('a', 1), ('a', 2), (NULL, 3)) AS v(trip_id, n)",
     )
     suite = _write_suite(
         tmp_path,
-        "    - unique: {columns: [trip_id], severity: warn}\n"  # falla (warn) primero
-        "    - not_null: trip_id",  # falla (error): aquí debe cortar
+        "    - unique: {columns: [trip_id], severity: warn}\n"  # fails (warn) first
+        "    - not_null: trip_id",  # fails (error): should stop here
     )
     result = runner.invoke(app, ["run", str(suite), "--fail-fast"])
     assert result.exit_code == 1
-    assert "WARN" in result.output  # la advertencia se ejecutó y se reportó
-    assert "not_null" in result.output  # siguió hasta el error
-    assert "0/2 checks OK, 1 advertencia(s)" in result.output
+    assert "WARN" in result.output  # the warning ran and was reported
+    assert "not_null" in result.output  # continued to the error
+    assert "0/2 checks OK, 1 warning(s)" in result.output
 
 
 # ---------------------------------------------------------------------------
-# errores de configuración → exit 2
+# configuration errors → exit 2
 # ---------------------------------------------------------------------------
 
 
@@ -204,14 +204,14 @@ def test_run_missing_source_file_exit_2(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# validate y --version
+# validate and --version
 # ---------------------------------------------------------------------------
 
 
 def test_validate_ok(passing_suite: Path) -> None:
     result = runner.invoke(app, ["validate", str(passing_suite)])
     assert result.exit_code == 0
-    assert "OK: 1 fuente(s), 3 check(s)" in result.output
+    assert "OK: 1 source(s), 3 check(s)" in result.output
 
 
 def test_version() -> None:
@@ -227,7 +227,7 @@ def test_version() -> None:
 
 @pytest.fixture()
 def warn_only_suite(tmp_path: Path) -> Path:
-    """El único check que falla (unique) está marcado como severity: warn."""
+    """The only failing check (unique) is marked as severity: warn."""
     _write_parquet(
         tmp_path / "trips.parquet",
         "SELECT * FROM (VALUES ('a', 1), ('a', 2)) AS v(trip_id, n)",
@@ -244,7 +244,7 @@ def test_run_warn_only_exits_0_and_shows_warn(warn_only_suite: Path) -> None:
     assert result.exit_code == 0
     assert "WARN" in result.output
     assert "FAIL" not in result.output
-    assert "1 advertencia(s)" in result.output
+    assert "1 warning(s)" in result.output
 
 
 def test_run_warn_plus_error_exits_1(tmp_path: Path) -> None:
@@ -267,7 +267,7 @@ def test_run_warn_json_passed_true_and_severity(warn_only_suite: Path) -> None:
     result = runner.invoke(app, ["run", str(warn_only_suite), "-f", "json"])
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert payload["passed"] is True  # solo falla un warn -> no cuenta como error
+    assert payload["passed"] is True  # only a warn fails -> not counted as an error
     assert payload["failed"] == 1
     assert payload["errors"] == 0
     by_check = {item["check"]: item for item in payload["checks"]}
@@ -284,7 +284,7 @@ def test_run_warn_junit_excludes_from_failures(warn_only_suite: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# descubrimiento por defecto de ./quacklint.yaml
+# default discovery of ./quacklint.yaml
 # ---------------------------------------------------------------------------
 
 

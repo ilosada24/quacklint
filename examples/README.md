@@ -1,12 +1,12 @@
-# Ejemplos
+# Examples
 
-Cada directorio contiene un dataset pequeño y una suite YAML funcional:
+Each directory contains a small dataset and a working YAML suite:
 
-- [taxi](taxi/) — viajes de taxi en CSV con errores deliberados; usa los 8
-  tipos de check del contrato y muestra cómo se ven los fallos.
+- [taxi](taxi/) — taxi trips in CSV with deliberate errors; uses all 8 check
+  types from the contract and shows what failures look like.
 
-Para ejecutar cualquiera:
+To run any of them:
 
 ```console
-$ uv run quacklint run examples/<nombre>/quacklint.yaml
+$ uv run quacklint run examples/<name>/quacklint.yaml
 ```

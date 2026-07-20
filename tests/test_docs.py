@@ -1,4 +1,4 @@
-"""La referencia de checks se genera desde los docstrings: debe estar al día."""
+"""The checks reference is generated from docstrings: it must stay up to date."""
 
 from __future__ import annotations
 

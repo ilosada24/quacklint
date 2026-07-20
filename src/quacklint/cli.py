@@ -1,7 +1,7 @@
-"""CLI de quacklint (Typer).
+"""quacklint CLI (Typer).
 
-Códigos de salida: 0 = todos los checks pasan, 1 = checks fallidos,
-2 = error de configuración (suite inválida, fuente inexistente...).
+Exit codes: 0 = all checks pass, 1 = checks failed,
+2 = configuration error (invalid suite, missing source...).
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ EXIT_CONFIG_ERROR = 2
 
 DEFAULT_SUITE = Path("quacklint.yaml")
 
-app = typer.Typer(help="Data quality declarativo para DuckDB.", no_args_is_help=True)
+app = typer.Typer(help="Declarative data quality for DuckDB.", no_args_is_help=True)
 _err = Console(stderr=True)
 _out = Console()
 
@@ -40,15 +40,15 @@ def _load_suite(path: Path) -> Suite:
 
 
 def _resolve_suite_file(suite_file: Path | None) -> Path:
-    """Devuelve el fichero de suite indicado o, si se omite, ./quacklint.yaml."""
+    """Return the given suite file or, if omitted, ./quacklint.yaml."""
     if suite_file is not None:
         return suite_file
     if DEFAULT_SUITE.exists():
         return DEFAULT_SUITE
     _config_error(
         SpecError(
-            "no se indicó un fichero de suite y no existe "
-            f"./{DEFAULT_SUITE} en el directorio actual"
+            "no suite file given and "
+            f"./{DEFAULT_SUITE} does not exist in the current directory"
         )
     )
 
@@ -67,26 +67,26 @@ def main_options(
             "--version",
             callback=_version_callback,
             is_eager=True,
-            help="Muestra la versión y sale.",
+            help="Show the version and exit.",
         ),
     ] = False,
 ) -> None:
-    """quacklint: checks de calidad de datos declarados en YAML, ejecutados como SQL en DuckDB."""
+    """quacklint: data quality checks declared in YAML, run as SQL on DuckDB."""
 
 
 @app.command()
 def validate(
     suite_file: Annotated[
         Path | None,
-        typer.Argument(help="Ruta a la suite YAML (por defecto ./quacklint.yaml)."),
+        typer.Argument(help="Path to the YAML suite (defaults to ./quacklint.yaml)."),
     ] = None,
 ) -> None:
-    """Valida la suite YAML sin ejecutar ningún check."""
+    """Validate the YAML suite without running any check."""
     suite_file = _resolve_suite_file(suite_file)
     suite = _load_suite(suite_file)
     total_checks = sum(len(entries) for entries in suite.spec.checks.values())
     typer.echo(
-        f"OK: {len(suite.spec.sources)} fuente(s), {total_checks} check(s) en {suite_file}"
+        f"OK: {len(suite.spec.sources)} source(s), {total_checks} check(s) in {suite_file}"
     )
 
 
@@ -94,22 +94,22 @@ def validate(
 def run(
     suite_file: Annotated[
         Path | None,
-        typer.Argument(help="Ruta a la suite YAML (por defecto ./quacklint.yaml)."),
+        typer.Argument(help="Path to the YAML suite (defaults to ./quacklint.yaml)."),
     ] = None,
     fmt: Annotated[
         ReportFormat,
-        typer.Option("--format", "-f", help="Formato del informe."),
+        typer.Option("--format", "-f", help="Report format."),
     ] = ReportFormat.TABLE,
     explain: Annotated[
         bool,
-        typer.Option("--explain", help="Imprime el SQL compilado de cada check y no ejecuta nada."),
+        typer.Option("--explain", help="Print the compiled SQL of each check and run nothing."),
     ] = False,
     fail_fast: Annotated[
         bool,
-        typer.Option("--fail-fast", help="Se detiene en el primer check fallido."),
+        typer.Option("--fail-fast", help="Stop at the first error failure (warnings don't stop)."),
     ] = False,
 ) -> None:
-    """Ejecuta los checks de la suite contra sus fuentes."""
+    """Run the suite's checks against their sources."""
     suite_file = _resolve_suite_file(suite_file)
     suite = _load_suite(suite_file)
 
@@ -140,7 +140,7 @@ def run(
         _out.print(build_table(results))
         summary = f"{len(results) - failed}/{len(results)} checks OK"
         if warnings:
-            summary += f", {warnings} advertencia(s)"
+            summary += f", {warnings} warning(s)"
         _out.print(summary)
 
     if errors:

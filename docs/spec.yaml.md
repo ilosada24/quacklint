@@ -1,10 +1,10 @@
-# Contrato del formato YAML de quacklint (`version: 1`)
+# quacklint YAML format contract (`version: 1`)
 
-Este documento es **el contrato** del formato de suite. El parser
-([suite.py](../src/quacklint/suite.py)) no puede desviarse de lo aquí descrito
-sin actualizar este fichero, y viceversa.
+This document is **the contract** for the suite format. The parser
+([suite.py](../src/quacklint/suite.py)) cannot deviate from what is described
+here without updating this file, and vice versa.
 
-## Ejemplo completo
+## Complete example
 
 ```yaml
 version: 1
@@ -25,199 +25,196 @@ checks:
         query: SELECT * FROM trips WHERE dropoff_ts < pickup_ts
 ```
 
-## Estructura general
+## Overall structure
 
-El fichero de suite se pasa a `quacklint run` / `quacklint validate` como
-argumento. Si se omite, ambos comandos buscan `./quacklint.yaml` en el
-directorio actual.
+The suite file is passed to `quacklint run` / `quacklint validate` as an
+argument. If omitted, both commands look for `./quacklint.yaml` in the current
+directory.
 
-Una suite es un mapeo YAML con exactamente estas claves (cualquier otra clave
-en el nivel superior es un error):
+A suite is a YAML mapping with exactly these keys (any other top-level key is an
+error):
 
-| Clave     | Obligatoria | Tipo    | Descripción                                        |
-| --------- | ----------- | ------- | -------------------------------------------------- |
-| `version` | sí          | entero  | Versión del formato. Solo se acepta `1`.           |
-| `sources` | sí          | mapeo   | Fuentes de datos. Al menos una.                    |
-| `checks`  | no          | mapeo   | Checks por fuente. Puede omitirse o estar vacío.   |
+| Key       | Required | Type    | Description                                     |
+| --------- | -------- | ------- | ----------------------------------------------- |
+| `version` | yes      | integer | Format version. Only `1` is accepted.          |
+| `sources` | yes      | mapping | Data sources. At least one.                    |
+| `checks`  | no       | mapping | Checks per source. May be omitted or empty.    |
 
 ## `sources`
 
-Mapeo de **nombre de fuente** a configuración:
+Mapping of **source name** to configuration:
 
 ```yaml
 sources:
-  <nombre>:
-    path: <ruta>
+  <name>:
+    path: <path>
 ```
 
-- El nombre debe ser un identificador: letras, dígitos y `_`, sin empezar por
-  dígito. Cada fuente se expone como una **vista DuckDB con ese nombre**, por lo
-  que los `custom_sql` pueden referenciarla directamente.
-- `path` es la ruta al fichero de datos, relativa al directorio del fichero de
-  suite (o absoluta). Extensiones soportadas: `.parquet`, `.csv`, `.json`,
-  `.ndjson`.
-- `path` también puede ser un **patrón glob** (`data/*.parquet`,
-  `logs/**/*.json`): DuckDB une todos los ficheros que casen en una sola vista.
-  El patrón debe casar con al menos un fichero (si no, es un error de fuente) y
-  todos los ficheros deben compartir el lector que implica la extensión del
-  patrón.
+- The name must be an identifier: letters, digits and `_`, not starting with a
+  digit. Each source is exposed as a **DuckDB view with that name**, so
+  `custom_sql` can reference it directly.
+- `path` is the path to the data file, relative to the suite file's directory
+  (or absolute). Supported extensions: `.parquet`, `.csv`, `.json`, `.ndjson`.
+- `path` may also be a **glob pattern** (`data/*.parquet`, `logs/**/*.json`):
+  DuckDB unions all matching files into a single view. The pattern must match at
+  least one file (otherwise it's a source error) and all files must share the
+  reader implied by the pattern's extension.
 
 ## `checks`
 
-Mapeo de nombre de fuente (debe existir en `sources`) a **lista** de checks.
-Cada elemento de la lista es un mapeo con **una única clave**: el tipo de check.
+Mapping of source name (must exist in `sources`) to a **list** of checks. Each
+list item is a mapping with **a single key**: the check type.
 
-Semántica común: cada check compila a una consulta SQL de DuckDB que devuelve
-las filas que **violan** la regla. El check **pasa** si la consulta devuelve 0
-filas. Los datos nunca se cargan a Python para validar.
+Common semantics: each check compiles to a DuckDB SQL query that returns the
+rows that **violate** the rule. The check **passes** if the query returns 0
+rows. Data is never loaded into Python to validate.
 
-Referenciar una columna que no existe en la fuente es un **error de
-configuración** (código de salida 2), no un fallo del check: se valida contra
-el esquema real antes de ejecutar nada.
+Referencing a column that does not exist in the source is a **configuration
+error** (exit code 2), not a check failure: it is validated against the real
+schema before anything runs.
 
 #### `severity`
 
-Cualquier check acepta un campo opcional `severity` con valores `error` (por
-defecto) o `warn`:
+Any check accepts an optional `severity` field with values `error` (the
+default) or `warn`:
 
 ```yaml
 - not_null: {columns: [trip_id], severity: warn}
 - row_count: {min: 1000, severity: warn}
 ```
 
-- `error`: un fallo cuenta para el código de salida (`1`).
-- `warn`: el fallo se **reporta** en todos los formatos (aparece como `WARN` en
-  la tabla, con su `severity` en JSON, y como `system-out` en JUnit) pero **no**
-  afecta al código de salida: si solo fallan checks `warn`, el CLI sale con `0`.
-- `--fail-fast` tampoco se detiene ante un `warn`: una advertencia se reporta y
-  la ejecución continúa; solo corta con el primer fallo de `severity: error`.
-- `severity` solo puede indicarse en la forma de mapeo del check (no en las
-  formas abreviadas como `- not_null: trip_id`).
+- `error`: a failure counts toward the exit code (`1`).
+- `warn`: the failure is **reported** in every format (shown as `WARN` in the
+  table, with its `severity` in JSON, and as `system-out` in JUnit) but does
+  **not** affect the exit code: if only `warn` checks fail, the CLI exits `0`.
+- `--fail-fast` does not stop on a `warn` either: a warning is reported and the
+  run continues; it only stops at the first `severity: error` failure.
+- `severity` can only be set in the mapping form of a check (not in the
+  shorthand forms like `- not_null: trip_id`).
 
 ### `not_null`
 
-Las columnas indicadas no contienen `NULL`.
+The given columns contain no `NULL`.
 
 ```yaml
-- not_null: [trip_id, pickup_ts]   # lista de columnas
-- not_null: trip_id                # forma abreviada: una sola columna
+- not_null: [trip_id, pickup_ts]   # list of columns
+- not_null: trip_id                # shorthand: a single column
 ```
 
 ### `unique`
 
-No hay valores duplicados en la columna (o combinación de columnas).
+No duplicate values in the column (or combination of columns).
 
 ```yaml
-- unique: trip_id                  # forma abreviada: una columna
-- unique: [trip_id, pickup_ts]     # clave compuesta
+- unique: trip_id                  # shorthand: a single column
+- unique: [trip_id, pickup_ts]     # composite key
 ```
 
-Las filas con `NULL` en alguna de las columnas se ignoran (para exigir no
-nulos está `not_null`).
+Rows with a `NULL` in any of the columns are ignored (use `not_null` to require
+non-nulls).
 
 ### `row_count`
 
-El número de filas de la fuente está dentro de los límites (inclusive).
+The source's row count is within the bounds (inclusive).
 
 ```yaml
 - row_count: {min: 1}
 - row_count: {min: 100, max: 100000}
 ```
 
-- Al menos uno de `min` / `max` es obligatorio; ambos son enteros `>= 0`.
-- Si se dan ambos, debe cumplirse `min <= max`.
-- Violación: la consulta devuelve una única fila con el recuento cuando está
-  fuera de límites.
+- At least one of `min` / `max` is required; both are integers `>= 0`.
+- If both are given, `min <= max` must hold.
+- Violation: the query returns a single row with the count when it is out of
+  bounds.
 
 ### `accepted_values`
 
-Todos los valores de la columna pertenecen al conjunto dado.
+Every value of the column belongs to the given set.
 
 ```yaml
 - accepted_values:
     column: payment_type
-    values: [card, cash]           # lista no vacía de escalares (str/int/float/bool)
+    values: [card, cash]           # non-empty list of scalars (str/int/float/bool)
 ```
 
-Los `NULL` no cuentan como violación (para eso está `not_null`).
+`NULL`s do not count as a violation (use `not_null` for that).
 
 ### `range`
 
-Los valores numéricos de la columna están dentro de los límites (inclusive).
+The numeric values of the column are within the bounds (inclusive).
 
 ```yaml
 - range: {column: fare, min: 0, max: 1000}
 ```
 
-- Al menos uno de `min` / `max` es obligatorio; ambos son numéricos.
-- Si se dan ambos, debe cumplirse `min <= max`.
-- Los `NULL` no cuentan como violación.
+- At least one of `min` / `max` is required; both are numeric.
+- If both are given, `min <= max` must hold.
+- `NULL`s do not count as a violation.
 
 ### `regex_match`
 
-Todos los valores no nulos de la columna casan con la expresión regular.
+Every non-null value of the column matches the regular expression.
 
 ```yaml
 - regex_match: {column: trip_id, pattern: 't-[0-9]{3}'}
 ```
 
-- El patrón debe casar con el **valor completo** (`regexp_full_match` de
-  DuckDB); usa `.*` explícitos para búsquedas parciales.
-- Sintaxis RE2 (la de DuckDB); el patrón se valida al cargar la suite.
-- Los `NULL` no cuentan como violación.
+- The pattern must match the **whole value** (DuckDB's `regexp_full_match`); use
+  explicit `.*` for partial searches.
+- RE2 syntax (DuckDB's); the pattern is validated when the suite is loaded.
+- `NULL`s do not count as a violation.
 
 ### `freshness`
 
-El valor más reciente de la columna temporal no es más antiguo que `max_age`
-respecto al momento de ejecución.
+The most recent value of the timestamp column is not older than `max_age`
+relative to run time.
 
 ```yaml
 - freshness: {column: pickup_ts, max_age: 24h}
 ```
 
-- `max_age` es una **duración** (ver más abajo). La referencia temporal es el
-  `now()` de DuckDB en el momento de la ejecución.
-- Si la fuente está vacía o la columna es toda `NULL`, el check **pasa**
-  (para exigir datos están `row_count` y `not_null`).
+- `max_age` is a **duration** (see below). The time reference is DuckDB's
+  `now()` at run time.
+- If the source is empty or the column is all `NULL`, the check **passes** (use
+  `row_count` and `not_null` to require data).
 
 ### `custom_sql`
 
-Consulta SQL arbitraria cuyas filas resultantes son las violaciones.
+Arbitrary SQL query whose result rows are the violations.
 
 ```yaml
 - custom_sql:
-    name: no_negative_duration     # identificador, único dentro de la suite
+    name: no_negative_duration     # identifier, unique within the suite
     query: SELECT * FROM trips WHERE dropoff_ts < pickup_ts
 ```
 
-- La consulta puede referenciar cualquier fuente declarada por su nombre de
-  vista.
-- En los informes, el check se reporta con su `name` (no como `custom_sql`).
-- Un `;` final se elimina automáticamente; la consulta debe ser un único
+- The query can reference any declared source by its view name.
+- In reports, the check is reported under its `name` (not as `custom_sql`).
+- A trailing `;` is stripped automatically; the query must be a single
   `SELECT`.
 
-## Duraciones
+## Durations
 
-Formato: `<entero><unidad>`, sin espacios. Unidades:
+Format: `<integer><unit>`, no spaces. Units:
 
-| Unidad | Significado |
-| ------ | ----------- |
-| `s`    | segundos    |
-| `m`    | minutos     |
-| `h`    | horas       |
-| `d`    | días        |
+| Unit | Meaning |
+| ---- | ------- |
+| `s`  | seconds |
+| `m`  | minutes |
+| `h`  | hours   |
+| `d`  | days    |
 
-Ejemplos válidos: `30s`, `15m`, `24h`, `7d`. Inválidos: `24 h`, `1w`, `1.5h`.
+Valid examples: `30s`, `15m`, `24h`, `7d`. Invalid: `24 h`, `1w`, `1.5h`.
 
-## Errores y códigos de salida
+## Errors and exit codes
 
-- Toda suite inválida produce un mensaje accionable con la ubicación del
-  problema, p. ej. `checks.trips[3] (range): necesita al menos 'min' o 'max'`.
-  Nunca un traceback.
-- Códigos de salida del CLI: `0` todos los checks pasan, `1` hay checks
-  fallidos, `2` error de configuración (suite inválida, fuente inexistente...).
+- Every invalid suite produces an actionable message with the location of the
+  problem, e.g. `checks.trips[3] (range): needs at least 'min' or 'max'`. Never
+  a traceback.
+- CLI exit codes: `0` all checks pass, `1` there are failed checks, `2`
+  configuration error (invalid suite, missing source...).
 
-## Evolución del formato
+## Format evolution
 
-`version` solo se incrementará con cambios incompatibles. El parser rechaza
-cualquier versión distinta de `1` con un mensaje explícito.
+`version` is only incremented for incompatible changes. The parser rejects any
+version other than `1` with an explicit message.

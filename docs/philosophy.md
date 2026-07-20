@@ -1,29 +1,28 @@
-# Filosofía de quacklint
+# quacklint philosophy
 
-## Por qué existe
+## Why it exists
 
-Los checks de calidad de datos suelen acabar como scripts ad hoc de pandas:
-lentos, imperativos, imposibles de revisar y acoplados al entorno de quien los
-escribió. quacklint apuesta por lo contrario:
+Data quality checks often end up as ad hoc pandas scripts: slow, imperative,
+impossible to review and coupled to whoever wrote them. quacklint bets on the
+opposite:
 
-- **Declarativo.** Una suite YAML dice *qué* debe cumplirse, no *cómo*
-  comprobarlo. El YAML se revisa en un PR igual que el código.
-- **SQL primero.** Todo check compila a SQL de DuckDB y se ejecuta donde están
-  los datos. Nunca se cargan datos a pandas ni a memoria de Python para validar:
-  DuckDB lee Parquet/CSV/JSON directamente y en paralelo.
-- **DuckDB como motor.** Sin servicios, sin credenciales, sin infraestructura:
-  un proceso local que escala a ficheros de gigabytes.
-- **Hecho para CI.** Códigos de salida estables, salida `table`/`json`/`junit`,
-  y errores de configuración accionables (nunca tracebacks). Una suite rota debe
-  romper el pipeline con un mensaje que diga exactamente qué arreglar.
+- **Declarative.** A YAML suite says *what* must hold, not *how* to check it.
+  The YAML is reviewed in a PR just like code.
+- **SQL first.** Every check compiles to DuckDB SQL and runs where the data is.
+  Data is never loaded into pandas or Python memory to validate: DuckDB reads
+  Parquet/CSV/JSON directly and in parallel.
+- **DuckDB as the engine.** No services, no credentials, no infrastructure: a
+  local process that scales to gigabyte-sized files.
+- **Built for CI.** Stable exit codes, `table`/`json`/`junit` output, and
+  actionable configuration errors (never tracebacks). A broken suite must break
+  the pipeline with a message that says exactly what to fix.
 
-## Principios de diseño
+## Design principles
 
-1. La violación de una regla es una consulta: cada check produce el SQL que
-   devuelve las filas inválidas. Cero filas = check pasa. Esto hace los checks
-   componibles, inspeccionables (`to_sql()`) y depurables con cualquier cliente
-   DuckDB.
-2. El formato YAML es un contrato versionado ([spec.yaml.md](spec.yaml.md)); el
-   parser no acepta nada que el contrato no documente.
-3. Extensible sin tocar el núcleo: los checks se registran vía decorador, y
-   `custom_sql` cubre lo que aún no tiene check dedicado.
+1. A rule violation is a query: each check produces the SQL that returns the
+   invalid rows. Zero rows = check passes. This makes checks composable,
+   inspectable (`to_sql()`) and debuggable with any DuckDB client.
+2. The YAML format is a versioned contract ([spec.yaml.md](spec.yaml.md)); the
+   parser accepts nothing the contract does not document.
+3. Extensible without touching the core: checks register via a decorator, and
+   `custom_sql` covers whatever does not yet have a dedicated check.

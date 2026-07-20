@@ -1,7 +1,7 @@
-"""Carga y validación de suites YAML.
+"""Loading and validation of YAML suites.
 
-El contrato del formato vive en docs/spec.yaml.md: cualquier cambio aquí debe
-reflejarse allí y viceversa.
+The format contract lives in docs/spec.yaml.md: any change here must be
+reflected there and vice versa.
 """
 
 from __future__ import annotations
@@ -35,17 +35,17 @@ _DURATION_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 
 def parse_duration(raw: str) -> timedelta:
-    """Convierte duraciones tipo '24h' en timedelta. Unidades: s, m, h, d."""
+    """Convert durations like '24h' into a timedelta. Units: s, m, h, d."""
     match = _DURATION_RE.match(raw.strip())
     if match is None:
         raise ValueError(
-            f"duración inválida: {raw!r} (formato: entero + unidad s/m/h/d, p. ej. '24h' o '30m')"
+            f"invalid duration: {raw!r} (format: integer + unit s/m/h/d, e.g. '24h' or '30m')"
         )
     return timedelta(seconds=int(match["value"]) * _DURATION_SECONDS[match["unit"]])
 
 
 def format_duration(delta: timedelta) -> str:
-    """Formatea un timedelta con la unidad más grande exacta ('24h', '7d'...)."""
+    """Format a timedelta using the largest exact unit ('24h', '7d'...)."""
     seconds = int(delta.total_seconds())
     for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
         if seconds >= size and seconds % size == 0:
@@ -54,7 +54,7 @@ def format_duration(delta: timedelta) -> str:
 
 
 class SourceSpec(BaseModel):
-    """Una fuente de datos: un fichero que se expondrá como vista DuckDB."""
+    """A data source: a file exposed as a DuckDB view."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -62,7 +62,7 @@ class SourceSpec(BaseModel):
 
 
 class BaseCheckSpec(BaseModel):
-    """Base de la configuración de un check dentro de la suite."""
+    """Base of a check's configuration within the suite."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -72,11 +72,11 @@ class BaseCheckSpec(BaseModel):
 
     @classmethod
     def coerce_payload(cls, payload: Any) -> Any:
-        """Normaliza formas abreviadas del YAML (string/lista) al mapeo de campos."""
+        """Normalize shorthand YAML forms (string/list) to the field mapping."""
         return payload
 
     def referenced_columns(self) -> tuple[str, ...]:
-        """Columnas de la fuente que el check referencia (se validan contra el esquema)."""
+        """Source columns the check references (validated against the schema)."""
         return ()
 
 
@@ -134,9 +134,9 @@ class RangeSpec(BaseCheckSpec):
     @model_validator(mode="after")
     def _validate_bounds(self) -> RangeSpec:
         if self.min is None and self.max is None:
-            raise ValueError("necesita al menos 'min' o 'max'")
+            raise ValueError("needs at least 'min' or 'max'")
         if self.min is not None and self.max is not None and self.min > self.max:
-            raise ValueError(f"'min' ({self.min}) no puede ser mayor que 'max' ({self.max})")
+            raise ValueError(f"'min' ({self.min}) cannot be greater than 'max' ({self.max})")
         return self
 
     def referenced_columns(self) -> tuple[str, ...]:
@@ -155,7 +155,7 @@ class RegexMatchSpec(BaseCheckSpec):
         try:
             re.compile(value)
         except re.error as exc:
-            raise ValueError(f"expresión regular inválida: {exc}") from exc
+            raise ValueError(f"invalid regular expression: {exc}") from exc
         return value
 
     def referenced_columns(self) -> tuple[str, ...]:
@@ -171,9 +171,9 @@ class RowCountSpec(BaseCheckSpec):
     @model_validator(mode="after")
     def _validate_bounds(self) -> RowCountSpec:
         if self.min is None and self.max is None:
-            raise ValueError("necesita al menos 'min' o 'max'")
+            raise ValueError("needs at least 'min' or 'max'")
         if self.min is not None and self.max is not None and self.min > self.max:
-            raise ValueError(f"'min' ({self.min}) no puede ser mayor que 'max' ({self.max})")
+            raise ValueError(f"'min' ({self.min}) cannot be greater than 'max' ({self.max})")
         return self
 
 
@@ -190,7 +190,7 @@ class FreshnessSpec(BaseCheckSpec):
             return parse_duration(value)
         if isinstance(value, timedelta):
             return value
-        raise ValueError("'max_age' debe ser una duración como '24h' (unidades: s, m, h, d)")
+        raise ValueError("'max_age' must be a duration like '24h' (units: s, m, h, d)")
 
     def referenced_columns(self) -> tuple[str, ...]:
         return (self.column,)
@@ -207,7 +207,7 @@ class CustomSqlSpec(BaseCheckSpec):
     def _strip_query(cls, value: str) -> str:
         stripped = value.strip().rstrip(";").strip()
         if not stripped:
-            raise ValueError("'query' no puede estar vacía")
+            raise ValueError("'query' cannot be empty")
         return stripped
 
 
@@ -227,7 +227,7 @@ CHECK_SPEC_TYPES: dict[str, type[BaseCheckSpec]] = {
 
 
 class SuiteSpec(BaseModel):
-    """Representación validada de una suite completa."""
+    """Validated representation of a complete suite."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -251,18 +251,18 @@ def _format_validation_error(exc: ValidationError) -> str:
 
 def _parse_sources(raw: Any) -> dict[str, SourceSpec]:
     if raw is None:
-        _fail("sources", "falta la sección; declara al menos una fuente: 'nombre: {path: ...}'")
+        _fail("sources", "section is missing; declare at least one source: 'name: {path: ...}'")
     if not isinstance(raw, dict):
-        _fail("sources", "debe ser un mapeo de nombre de fuente a configuración")
+        _fail("sources", "must be a mapping of source name to configuration")
     if not raw:
-        _fail("sources", "debe declarar al menos una fuente")
+        _fail("sources", "must declare at least one source")
     sources: dict[str, SourceSpec] = {}
     for name, payload in raw.items():
         if not isinstance(name, str) or not _IDENTIFIER_RE.match(name):
             _fail(
                 "sources",
-                f"nombre de fuente inválido: {name!r} "
-                "(letras, dígitos y '_', sin empezar por dígito)",
+                f"invalid source name: {name!r} "
+                "(letters, digits and '_', not starting with a digit)",
             )
         try:
             sources[name] = SourceSpec.model_validate(payload)
@@ -275,13 +275,13 @@ def _parse_check_entry(location: str, entry: Any) -> BaseCheckSpec:
     if not isinstance(entry, dict) or len(entry) != 1:
         _fail(
             location,
-            "cada check debe ser un mapeo con una única clave, "
-            "p. ej. '- unique: trip_id' o '- range: {column: fare, min: 0}'",
+            "each check must be a mapping with a single key, "
+            "e.g. '- unique: trip_id' or '- range: {column: fare, min: 0}'",
         )
     check_name, payload = next(iter(entry.items()))
     if not isinstance(check_name, str) or check_name not in CHECK_SPEC_TYPES:
         available = ", ".join(sorted(CHECK_SPEC_TYPES))
-        _fail(location, f"check desconocido: {check_name!r}. Checks disponibles: {available}")
+        _fail(location, f"unknown check: {check_name!r}. Available checks: {available}")
     spec_cls = CHECK_SPEC_TYPES[check_name]
     try:
         return spec_cls.model_validate(spec_cls.coerce_payload(payload))
@@ -293,7 +293,7 @@ def _parse_checks(raw: Any, sources: dict[str, SourceSpec]) -> dict[str, list[Ba
     if raw is None:
         return {}
     if not isinstance(raw, dict):
-        _fail("checks", "debe ser un mapeo de nombre de fuente a lista de checks")
+        _fail("checks", "must be a mapping of source name to a list of checks")
     checks: dict[str, list[BaseCheckSpec]] = {}
     for source_name, entries in raw.items():
         location = f"checks.{source_name}"
@@ -301,11 +301,11 @@ def _parse_checks(raw: Any, sources: dict[str, SourceSpec]) -> dict[str, list[Ba
             defined = ", ".join(sorted(sources))
             _fail(
                 location,
-                f"la fuente '{source_name}' no está declarada en 'sources'. "
-                f"Fuentes declaradas: {defined}",
+                f"source '{source_name}' is not declared in 'sources'. "
+                f"Declared sources: {defined}",
             )
         if not isinstance(entries, list):
-            _fail(location, "debe ser una lista de checks (cada elemento: '- <check>: <config>')")
+            _fail(location, "must be a list of checks (each item: '- <check>: <config>')")
         checks[source_name] = [
             _parse_check_entry(f"{location}[{index}]", entry)
             for index, entry in enumerate(entries)
@@ -314,26 +314,26 @@ def _parse_checks(raw: Any, sources: dict[str, SourceSpec]) -> dict[str, list[Ba
 
 
 def parse_suite(data: Any) -> SuiteSpec:
-    """Valida la estructura ya deserializada de una suite y construye el modelo."""
+    """Validate the already-deserialized suite structure and build the model."""
     if not isinstance(data, dict):
         raise SpecError(
-            "la suite debe ser un mapeo YAML con las claves 'version', 'sources' y 'checks' "
-            "(ver docs/spec.yaml.md)"
+            "the suite must be a YAML mapping with the keys 'version', 'sources' and 'checks' "
+            "(see docs/spec.yaml.md)"
         )
     unknown = set(data) - {"version", "sources", "checks"}
     if unknown:
         _fail(
             "suite",
-            f"claves desconocidas: {', '.join(sorted(str(key) for key in unknown))}. "
-            "Claves válidas: version, sources, checks",
+            f"unknown keys: {', '.join(sorted(str(key) for key in unknown))}. "
+            "Valid keys: version, sources, checks",
         )
     if "version" not in data:
-        _fail("version", "falta; añade 'version: 1' al principio de la suite")
+        _fail("version", "missing; add 'version: 1' at the top of the suite")
     if data["version"] != SUPPORTED_VERSION:
         _fail(
             "version",
-            f"versión no soportada: {data['version']!r}. "
-            f"Esta versión de quacklint soporta 'version: {SUPPORTED_VERSION}'",
+            f"unsupported version: {data['version']!r}. "
+            f"This quacklint version supports 'version: {SUPPORTED_VERSION}'",
         )
     sources = _parse_sources(data.get("sources"))
     checks = _parse_checks(data.get("checks"), sources)
@@ -341,25 +341,25 @@ def parse_suite(data: Any) -> SuiteSpec:
 
 
 def load_suite(path: str | Path) -> SuiteSpec:
-    """Lee y valida una suite desde un fichero YAML."""
+    """Read and validate a suite from a YAML file."""
     suite_path = Path(path)
     try:
         text = suite_path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        raise SpecError(f"no existe el fichero de suite: {suite_path}") from None
+        raise SpecError(f"suite file does not exist: {suite_path}") from None
     except OSError as exc:
-        raise SpecError(f"no se pudo leer la suite {suite_path}: {exc}") from exc
+        raise SpecError(f"could not read suite {suite_path}: {exc}") from exc
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
         detail = " ".join(str(exc).split())
-        raise SpecError(f"YAML inválido en {suite_path}: {detail}") from exc
+        raise SpecError(f"invalid YAML in {suite_path}: {detail}") from exc
     return parse_suite(data)
 
 
 @dataclass(frozen=True)
 class CompiledCheck:
-    """SQL compilado de un check (para `quacklint run --explain`)."""
+    """A check's compiled SQL (for `quacklint run --explain`)."""
 
     source: str
     check: str
@@ -368,7 +368,7 @@ class CompiledCheck:
 
 @dataclass(frozen=True)
 class Suite:
-    """Suite validada más el contexto necesario para ejecutarla."""
+    """Validated suite plus the context needed to run it."""
 
     spec: SuiteSpec
     base_dir: Path
@@ -380,8 +380,8 @@ class Suite:
         return cls(spec=spec, base_dir=suite_path.resolve().parent)
 
     def compile(self) -> list[CompiledCheck]:
-        """Compila cada check a su SQL de violaciones, sin ejecutar nada."""
-        from quacklint.checks import builtin  # noqa: F401  (registra los checks incorporados)
+        """Compile each check to its violations SQL, without running anything."""
+        from quacklint.checks import builtin  # noqa: F401  (registers the built-in checks)
 
         return [
             CompiledCheck(
@@ -394,12 +394,12 @@ class Suite:
         ]
 
     def run(self, *, fail_fast: bool = False) -> list[CheckResult]:
-        """Crea las vistas de las fuentes y evalúa todos los checks en DuckDB.
+        """Create the source views and evaluate all checks in DuckDB.
 
-        Con `fail_fast`, se detiene tras el primer check fallido con
-        `severity: error` (una advertencia no detiene la ejecución).
+        With `fail_fast`, stop after the first failed check with
+        `severity: error` (a warning does not stop the run).
         """
-        from quacklint.checks import builtin  # noqa: F401  (registra los checks incorporados)
+        from quacklint.checks import builtin  # noqa: F401  (registers the built-in checks)
 
         conn = duckdb.connect()
         try:
@@ -417,7 +417,7 @@ class Suite:
             conn.close()
 
     def _check_referenced_columns(self, conn: duckdb.DuckDBPyConnection) -> None:
-        """Una columna inexistente es error de configuración, no un fallo del check."""
+        """A nonexistent column is a configuration error, not a check failure."""
         for source_name, entries in self.spec.checks.items():
             available = view_columns(conn, source_name)
             known = set(available)
@@ -430,6 +430,6 @@ class Suite:
                 if missing:
                     raise SpecError(
                         f"checks.{source_name}[{index}] ({check_spec.check_type}): "
-                        f"columna(s) inexistente(s) en '{source_name}': {', '.join(missing)}. "
-                        f"Columnas disponibles: {', '.join(available)}"
+                        f"nonexistent column(s) in '{source_name}': {', '.join(missing)}. "
+                        f"Available columns: {', '.join(available)}"
                     )

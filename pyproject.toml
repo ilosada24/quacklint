@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "quacklint"
 version = "0.1.0"
-description = "Data quality declarativo para DuckDB: checks en YAML compilados a SQL."
+description = "Declarative data quality for DuckDB: YAML checks compiled to SQL."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

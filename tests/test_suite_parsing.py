@@ -1,4 +1,4 @@
-"""Tests de parsing y validación de suites (sin ejecutar ningún check)."""
+"""Suite parsing and validation tests (without running any check)."""
 
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ def parse(text: str) -> SuiteSpec:
 
 
 # ---------------------------------------------------------------------------
-# Suites válidas
+# Valid suites
 # ---------------------------------------------------------------------------
 
 
@@ -176,7 +176,7 @@ def test_row_count_parses() -> None:
 
 
 def test_row_count_requires_min_or_max() -> None:
-    with pytest.raises(SpecError, match="al menos 'min' o 'max'"):
+    with pytest.raises(SpecError, match="at least 'min' or 'max'"):
         parse(
             """
             version: 1
@@ -207,7 +207,7 @@ def test_regex_match_parses() -> None:
 
 
 def test_regex_match_rejects_invalid_pattern() -> None:
-    with pytest.raises(SpecError, match="expresión regular inválida"):
+    with pytest.raises(SpecError, match="invalid regular expression"):
         parse(
             """
             version: 1
@@ -290,17 +290,17 @@ def test_example_suite_parses() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Suites inválidas
+# Invalid suites
 # ---------------------------------------------------------------------------
 
 
 def test_top_level_must_be_mapping() -> None:
-    with pytest.raises(SpecError, match="mapeo YAML"):
+    with pytest.raises(SpecError, match="YAML mapping"):
         parse("- version: 1")
 
 
 def test_unknown_top_level_key() -> None:
-    with pytest.raises(SpecError, match="claves desconocidas: cheks"):
+    with pytest.raises(SpecError, match="unknown keys: cheks"):
         parse(
             """
             version: 1
@@ -312,7 +312,7 @@ def test_unknown_top_level_key() -> None:
 
 
 def test_missing_version() -> None:
-    with pytest.raises(SpecError, match="version: falta"):
+    with pytest.raises(SpecError, match="version: missing"):
         parse(
             """
             sources:
@@ -322,7 +322,7 @@ def test_missing_version() -> None:
 
 
 def test_unsupported_version() -> None:
-    with pytest.raises(SpecError, match="versión no soportada: 2"):
+    with pytest.raises(SpecError, match="unsupported version: 2"):
         parse(
             """
             version: 2
@@ -333,12 +333,12 @@ def test_unsupported_version() -> None:
 
 
 def test_missing_sources_section() -> None:
-    with pytest.raises(SpecError, match="sources: falta la sección"):
+    with pytest.raises(SpecError, match="sources: section is missing"):
         parse("version: 1")
 
 
 def test_empty_sources_section() -> None:
-    with pytest.raises(SpecError, match="al menos una fuente"):
+    with pytest.raises(SpecError, match="at least one source"):
         parse(
             """
             version: 1
@@ -348,7 +348,7 @@ def test_empty_sources_section() -> None:
 
 
 def test_invalid_source_name() -> None:
-    with pytest.raises(SpecError, match="nombre de fuente inválido"):
+    with pytest.raises(SpecError, match="invalid source name"):
         parse(
             """
             version: 1
@@ -381,7 +381,7 @@ def test_source_with_unknown_field() -> None:
 
 
 def test_checks_for_undeclared_source() -> None:
-    with pytest.raises(SpecError, match="no está declarada en 'sources'"):
+    with pytest.raises(SpecError, match="is not declared in 'sources'"):
         parse(
             """
             version: 1
@@ -395,7 +395,7 @@ def test_checks_for_undeclared_source() -> None:
 
 
 def test_unknown_check_type_lists_available_checks() -> None:
-    with pytest.raises(SpecError, match=r"check desconocido: 'nonnull'.*disponibles"):
+    with pytest.raises(SpecError, match=r"unknown check: 'nonnull'.*Available"):
         parse(
             """
             version: 1
@@ -409,7 +409,7 @@ def test_unknown_check_type_lists_available_checks() -> None:
 
 
 def test_check_entry_with_multiple_keys() -> None:
-    with pytest.raises(SpecError, match="única clave"):
+    with pytest.raises(SpecError, match="single key"):
         parse(
             """
             version: 1
@@ -467,7 +467,7 @@ def test_accepted_values_rejects_empty_list() -> None:
 
 
 def test_range_requires_min_or_max() -> None:
-    with pytest.raises(SpecError, match="al menos 'min' o 'max'"):
+    with pytest.raises(SpecError, match="at least 'min' or 'max'"):
         parse(
             """
             version: 1
@@ -481,7 +481,7 @@ def test_range_requires_min_or_max() -> None:
 
 
 def test_range_rejects_min_greater_than_max() -> None:
-    with pytest.raises(SpecError, match="no puede ser mayor"):
+    with pytest.raises(SpecError, match="cannot be greater"):
         parse(
             """
             version: 1
@@ -551,19 +551,19 @@ def test_custom_sql_rejects_invalid_name() -> None:
 
 
 # ---------------------------------------------------------------------------
-# load_suite: fichero y sintaxis YAML
+# load_suite: file and YAML syntax
 # ---------------------------------------------------------------------------
 
 
 def test_load_suite_missing_file(tmp_path: Path) -> None:
-    with pytest.raises(SpecError, match="no existe el fichero"):
+    with pytest.raises(SpecError, match="does not exist"):
         load_suite(tmp_path / "nope.yaml")
 
 
 def test_load_suite_invalid_yaml_syntax(tmp_path: Path) -> None:
     suite_file = tmp_path / "broken.yaml"
     suite_file.write_text("version: 1\nsources: [unclosed", encoding="utf-8")
-    with pytest.raises(SpecError, match="YAML inválido"):
+    with pytest.raises(SpecError, match="invalid YAML"):
         load_suite(suite_file)
 
 
@@ -587,5 +587,5 @@ def test_parse_duration_valid(raw: str, expected: timedelta) -> None:
 
 @pytest.mark.parametrize("raw", ["24 h", "1w", "1.5h", "h", "-5h", ""])
 def test_parse_duration_invalid(raw: str) -> None:
-    with pytest.raises(ValueError, match="duración inválida"):
+    with pytest.raises(ValueError, match="invalid duration"):
         parse_duration(raw)

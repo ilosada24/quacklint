@@ -1,8 +1,8 @@
-"""Clase base de los checks, resultado y registro por decorador.
+"""Check base class, result and decorator-based registry.
 
-Todo check compila a SQL de DuckDB que devuelve las filas que VIOLAN la regla:
-el check pasa si esa consulta no devuelve ninguna fila. Nunca se cargan datos
-a Python/pandas para validar.
+Every check compiles to DuckDB SQL that returns the rows that VIOLATE the rule:
+the check passes if that query returns no rows. Data is never loaded into
+Python/pandas to validate.
 """
 
 from __future__ import annotations
@@ -20,17 +20,17 @@ if TYPE_CHECKING:
     from quacklint.suite import BaseCheckSpec
 
 Severity = Literal["error", "warn"]
-"""Gravedad de un check: 'error' afecta al código de salida; 'warn' solo informa."""
+"""A check's severity: 'error' affects the exit code; 'warn' only reports."""
 
 
 def quote_ident(name: str) -> str:
-    """Cita un identificador (columna, vista) para SQL de DuckDB."""
+    """Quote an identifier (column, view) for DuckDB SQL."""
     return '"' + name.replace('"', '""') + '"'
 
 
 @dataclass(frozen=True, slots=True)
 class CheckResult:
-    """Resultado de evaluar un check contra una fuente."""
+    """Result of evaluating a check against a source."""
 
     check: str
     source: str
@@ -43,7 +43,7 @@ class CheckResult:
 
 
 class Check(ABC):
-    """Un check ejecutable sobre una fuente (vista DuckDB)."""
+    """A runnable check over a source (DuckDB view)."""
 
     name: ClassVar[str]
     sample_limit: ClassVar[int] = 5
@@ -54,22 +54,22 @@ class Check(ABC):
 
     @property
     def display_name(self) -> str:
-        """Nombre con el que se reporta el check (custom_sql usa el suyo propio)."""
+        """Name the check is reported under (custom_sql uses its own)."""
         return self.name
 
     @classmethod
     @abstractmethod
     def from_spec(cls, source: str, spec: BaseCheckSpec) -> Check:
-        """Construye el check a partir de su modelo de configuración validado."""
+        """Build the check from its validated configuration model."""
 
     @abstractmethod
     def to_sql(self, source: str) -> str:
-        """SQL de DuckDB cuyas filas resultantes son las violaciones sobre `source`."""
+        """DuckDB SQL whose result rows are the violations over `source`."""
 
     def evaluate(self, conn: duckdb.DuckDBPyConnection) -> CheckResult:
-        """Evalúa el check contando las filas que violan la regla.
+        """Evaluate the check by counting the rows that violate the rule.
 
-        Si hay violaciones, adjunta hasta `sample_limit` filas de muestra.
+        If there are violations, attach up to `sample_limit` sample rows.
         """
         sql = self.to_sql(self.source)
         row = self._fetchone(conn, f"SELECT count(*) FROM ({sql}) AS violations")
@@ -88,7 +88,7 @@ class Check(ABC):
             source=self.source,
             passed=False,
             failed_rows=failed_rows,
-            message=f"{failed_rows} fila(s) violan la regla",
+            message=f"{failed_rows} row(s) violate the rule",
             sample_columns=columns,
             sample_rows=sample,
             severity=self.severity,
@@ -97,8 +97,8 @@ class Check(ABC):
     def _sample(
         self, conn: duckdb.DuckDBPyConnection, sql: str
     ) -> tuple[tuple[str, ...], tuple[tuple[object, ...], ...]]:
-        # COLUMNS(*)::VARCHAR: los valores llegan como texto, evitando conversiones
-        # de tipos DuckDB→Python (p. ej. TIMESTAMPTZ requiere pytz).
+        # COLUMNS(*)::VARCHAR: values come back as text, avoiding DuckDB→Python
+        # type conversions (e.g. TIMESTAMPTZ requires pytz).
         sample_sql = (
             f"SELECT COLUMNS(*)::VARCHAR FROM ({sql}) AS violations LIMIT {self.sample_limit}"
         )
@@ -108,7 +108,7 @@ class Check(ABC):
             columns = tuple(str(desc[0]) for desc in cursor.description or [])
         except duckdb.Error as exc:
             raise ExecutionError(
-                f"check '{self.name}' sobre '{self.source}': error de DuckDB: {exc}"
+                f"check '{self.name}' on '{self.source}': DuckDB error: {exc}"
             ) from exc
         return columns, tuple(tuple(item) for item in rows)
 
@@ -119,7 +119,7 @@ class Check(ABC):
             return conn.execute(sql).fetchone()
         except duckdb.Error as exc:
             raise ExecutionError(
-                f"check '{self.name}' sobre '{self.source}': error de DuckDB: {exc}"
+                f"check '{self.name}' on '{self.source}': DuckDB error: {exc}"
             ) from exc
 
 
@@ -129,11 +129,11 @@ _REGISTRY: dict[str, type[Check]] = {}
 
 
 def register(name: str) -> Callable[[type[_CheckT]], type[_CheckT]]:
-    """Decorador que registra una implementación de check bajo su nombre del YAML."""
+    """Decorator that registers a check implementation under its YAML name."""
 
     def decorator(cls: type[_CheckT]) -> type[_CheckT]:
         if name in _REGISTRY:
-            raise ValueError(f"check duplicado en el registro: '{name}'")
+            raise ValueError(f"duplicate check in registry: '{name}'")
         cls.name = name
         _REGISTRY[name] = cls
         return cls
@@ -142,24 +142,24 @@ def register(name: str) -> Callable[[type[_CheckT]], type[_CheckT]]:
 
 
 def get_check(name: str) -> type[Check]:
-    """Devuelve la implementación registrada para un nombre de check."""
+    """Return the registered implementation for a check name."""
     try:
         return _REGISTRY[name]
     except KeyError:
-        available = ", ".join(sorted(_REGISTRY)) or "(ninguno)"
+        available = ", ".join(sorted(_REGISTRY)) or "(none)"
         raise ExecutionError(
-            f"el check '{name}' todavía no tiene implementación ejecutable. "
-            f"Checks implementados: {available}"
+            f"check '{name}' has no runnable implementation yet. "
+            f"Implemented checks: {available}"
         ) from None
 
 
 def build_check(source: str, spec: BaseCheckSpec) -> Check:
-    """Instancia la implementación registrada para una configuración de check."""
+    """Instantiate the registered implementation for a check configuration."""
     check = get_check(spec.check_type).from_spec(source, spec)
     check.severity = spec.severity
     return check
 
 
 def registered_checks() -> dict[str, type[Check]]:
-    """Copia del registro actual de checks."""
+    """Copy of the current check registry."""
     return dict(_REGISTRY)
