@@ -27,6 +27,10 @@ checks:
 
 ## Estructura general
 
+El fichero de suite se pasa a `quacklint run` / `quacklint validate` como
+argumento. Si se omite, ambos comandos buscan `./quacklint.yaml` en el
+directorio actual.
+
 Una suite es un mapeo YAML con exactamente estas claves (cualquier otra clave
 en el nivel superior es un error):
 
@@ -52,6 +56,11 @@ sources:
 - `path` es la ruta al fichero de datos, relativa al directorio del fichero de
   suite (o absoluta). Extensiones soportadas: `.parquet`, `.csv`, `.json`,
   `.ndjson`.
+- `path` también puede ser un **patrón glob** (`data/*.parquet`,
+  `logs/**/*.json`): DuckDB une todos los ficheros que casen en una sola vista.
+  El patrón debe casar con al menos un fichero (si no, es un error de fuente) y
+  todos los ficheros deben compartir el lector que implica la extensión del
+  patrón.
 
 ## `checks`
 
@@ -65,6 +74,25 @@ filas. Los datos nunca se cargan a Python para validar.
 Referenciar una columna que no existe en la fuente es un **error de
 configuración** (código de salida 2), no un fallo del check: se valida contra
 el esquema real antes de ejecutar nada.
+
+#### `severity`
+
+Cualquier check acepta un campo opcional `severity` con valores `error` (por
+defecto) o `warn`:
+
+```yaml
+- not_null: {columns: [trip_id], severity: warn}
+- row_count: {min: 1000, severity: warn}
+```
+
+- `error`: un fallo cuenta para el código de salida (`1`).
+- `warn`: el fallo se **reporta** en todos los formatos (aparece como `WARN` en
+  la tabla, con su `severity` en JSON, y como `system-out` en JUnit) pero **no**
+  afecta al código de salida: si solo fallan checks `warn`, el CLI sale con `0`.
+- `--fail-fast` tampoco se detiene ante un `warn`: una advertencia se reporta y
+  la ejecución continúa; solo corta con el primer fallo de `severity: error`.
+- `severity` solo puede indicarse en la forma de mapeo del check (no en las
+  formas abreviadas como `- not_null: trip_id`).
 
 ### `not_null`
 

@@ -23,7 +23,7 @@ from pydantic import (
     model_validator,
 )
 
-from quacklint.checks.base import CheckResult, build_check
+from quacklint.checks.base import CheckResult, Severity, build_check
 from quacklint.errors import SpecError
 from quacklint.sources import create_views, view_columns
 
@@ -67,6 +67,8 @@ class BaseCheckSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     check_type: ClassVar[str]
+
+    severity: Severity = "error"
 
     @classmethod
     def coerce_payload(cls, payload: Any) -> Any:
@@ -394,7 +396,8 @@ class Suite:
     def run(self, *, fail_fast: bool = False) -> list[CheckResult]:
         """Crea las vistas de las fuentes y evalúa todos los checks en DuckDB.
 
-        Con `fail_fast`, se detiene tras el primer check fallido.
+        Con `fail_fast`, se detiene tras el primer check fallido con
+        `severity: error` (una advertencia no detiene la ejecución).
         """
         from quacklint.checks import builtin  # noqa: F401  (registra los checks incorporados)
 
@@ -407,7 +410,7 @@ class Suite:
                 for check_spec in entries:
                     result = build_check(source_name, check_spec).evaluate(conn)
                     results.append(result)
-                    if fail_fast and not result.passed:
+                    if fail_fast and not result.passed and result.severity == "error":
                         return results
             return results
         finally:

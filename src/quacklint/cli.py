@@ -13,12 +13,14 @@ import typer
 from rich.console import Console
 
 from quacklint import __version__
-from quacklint.errors import QuacklintError
+from quacklint.errors import QuacklintError, SpecError
 from quacklint.report import ReportFormat, build_table, render_json, render_junit
 from quacklint.suite import Suite
 
 EXIT_CHECKS_FAILED = 1
 EXIT_CONFIG_ERROR = 2
+
+DEFAULT_SUITE = Path("quacklint.yaml")
 
 app = typer.Typer(help="Data quality declarativo para DuckDB.", no_args_is_help=True)
 _err = Console(stderr=True)
@@ -35,6 +37,20 @@ def _load_suite(path: Path) -> Suite:
         return Suite.from_file(path)
     except QuacklintError as exc:
         _config_error(exc)
+
+
+def _resolve_suite_file(suite_file: Path | None) -> Path:
+    """Devuelve el fichero de suite indicado o, si se omite, ./quacklint.yaml."""
+    if suite_file is not None:
+        return suite_file
+    if DEFAULT_SUITE.exists():
+        return DEFAULT_SUITE
+    _config_error(
+        SpecError(
+            "no se indicó un fichero de suite y no existe "
+            f"./{DEFAULT_SUITE} en el directorio actual"
+        )
+    )
 
 
 def _version_callback(value: bool) -> None:
@@ -60,9 +76,13 @@ def main_options(
 
 @app.command()
 def validate(
-    suite_file: Annotated[Path, typer.Argument(help="Ruta a la suite YAML.")],
+    suite_file: Annotated[
+        Path | None,
+        typer.Argument(help="Ruta a la suite YAML (por defecto ./quacklint.yaml)."),
+    ] = None,
 ) -> None:
     """Valida la suite YAML sin ejecutar ningún check."""
+    suite_file = _resolve_suite_file(suite_file)
     suite = _load_suite(suite_file)
     total_checks = sum(len(entries) for entries in suite.spec.checks.values())
     typer.echo(
@@ -72,7 +92,10 @@ def validate(
 
 @app.command()
 def run(
-    suite_file: Annotated[Path, typer.Argument(help="Ruta a la suite YAML.")],
+    suite_file: Annotated[
+        Path | None,
+        typer.Argument(help="Ruta a la suite YAML (por defecto ./quacklint.yaml)."),
+    ] = None,
     fmt: Annotated[
         ReportFormat,
         typer.Option("--format", "-f", help="Formato del informe."),
@@ -87,6 +110,7 @@ def run(
     ] = False,
 ) -> None:
     """Ejecuta los checks de la suite contra sus fuentes."""
+    suite_file = _resolve_suite_file(suite_file)
     suite = _load_suite(suite_file)
 
     if explain:
@@ -106,15 +130,20 @@ def run(
         _config_error(exc)
 
     failed = sum(1 for result in results if not result.passed)
+    warnings = sum(1 for result in results if not result.passed and result.severity == "warn")
+    errors = failed - warnings
     if fmt is ReportFormat.JSON:
         typer.echo(render_json(results))
     elif fmt is ReportFormat.JUNIT:
         typer.echo(render_junit(results))
     else:
         _out.print(build_table(results))
-        _out.print(f"{len(results) - failed}/{len(results)} checks OK")
+        summary = f"{len(results) - failed}/{len(results)} checks OK"
+        if warnings:
+            summary += f", {warnings} advertencia(s)"
+        _out.print(summary)
 
-    if failed:
+    if errors:
         raise typer.Exit(EXIT_CHECKS_FAILED)
 
 

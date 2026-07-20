@@ -121,8 +121,12 @@ $ quacklint run suite.yaml               # tabla rich con muestra de filas falli
 $ quacklint run suite.yaml -f json       # informe JSON
 $ quacklint run suite.yaml -f junit      # JUnit XML para CI
 $ quacklint run suite.yaml --explain     # imprime el SQL compilado, sin ejecutar
-$ quacklint run suite.yaml --fail-fast   # se detiene en el primer fallo
+$ quacklint run suite.yaml --fail-fast   # se detiene en el primer error (los warn no cortan)
+$ quacklint run                          # sin argumento: usa ./quacklint.yaml
 ```
+
+El argumento de suite es opcional: si se omite, `run` y `validate` buscan
+`./quacklint.yaml` en el directorio actual.
 
 Códigos de salida:
 

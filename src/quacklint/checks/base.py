@@ -10,7 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
 
 import duckdb
 
@@ -18,6 +18,9 @@ from quacklint.errors import ExecutionError
 
 if TYPE_CHECKING:
     from quacklint.suite import BaseCheckSpec
+
+Severity = Literal["error", "warn"]
+"""Gravedad de un check: 'error' afecta al código de salida; 'warn' solo informa."""
 
 
 def quote_ident(name: str) -> str:
@@ -36,6 +39,7 @@ class CheckResult:
     message: str = ""
     sample_columns: tuple[str, ...] = ()
     sample_rows: tuple[tuple[object, ...], ...] = ()
+    severity: Severity = "error"
 
 
 class Check(ABC):
@@ -44,8 +48,9 @@ class Check(ABC):
     name: ClassVar[str]
     sample_limit: ClassVar[int] = 5
 
-    def __init__(self, source: str) -> None:
+    def __init__(self, source: str, severity: Severity = "error") -> None:
         self.source = source
+        self.severity = severity
 
     @property
     def display_name(self) -> str:
@@ -71,7 +76,11 @@ class Check(ABC):
         failed_rows = int(row[0]) if row is not None else 0
         if failed_rows == 0:
             return CheckResult(
-                check=self.display_name, source=self.source, passed=True, failed_rows=0
+                check=self.display_name,
+                source=self.source,
+                passed=True,
+                failed_rows=0,
+                severity=self.severity,
             )
         columns, sample = self._sample(conn, sql)
         return CheckResult(
@@ -82,6 +91,7 @@ class Check(ABC):
             message=f"{failed_rows} fila(s) violan la regla",
             sample_columns=columns,
             sample_rows=sample,
+            severity=self.severity,
         )
 
     def _sample(
@@ -145,7 +155,9 @@ def get_check(name: str) -> type[Check]:
 
 def build_check(source: str, spec: BaseCheckSpec) -> Check:
     """Instancia la implementación registrada para una configuración de check."""
-    return get_check(spec.check_type).from_spec(source, spec)
+    check = get_check(spec.check_type).from_spec(source, spec)
+    check.severity = spec.severity
+    return check
 
 
 def registered_checks() -> dict[str, type[Check]]:

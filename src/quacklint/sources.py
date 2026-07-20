@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import glob as globlib
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,6 +22,25 @@ _READERS: dict[str, str] = {
     ".ndjson": "read_json_auto",
 }
 
+_GLOB_CHARS = ("*", "?", "[")
+
+
+def _is_glob(pattern: str) -> bool:
+    """True si la ruta es un patrón glob (contiene '*', '?' o '[')."""
+    return any(char in pattern for char in _GLOB_CHARS)
+
+
+def _reader_for(name: str, path: Path) -> str:
+    """Selecciona el lector DuckDB según la extensión de la ruta (o patrón)."""
+    reader = _READERS.get(path.suffix.lower())
+    if reader is None:
+        supported = ", ".join(sorted(_READERS))
+        raise SourceError(
+            f"fuente '{name}': extensión no soportada '{path.suffix}'. "
+            f"Extensiones soportadas: {supported}"
+        )
+    return reader
+
 
 def create_views(
     conn: duckdb.DuckDBPyConnection,
@@ -30,20 +50,21 @@ def create_views(
     """Crea una vista DuckDB por fuente para que los checks la consulten por nombre.
 
     Las rutas relativas se resuelven respecto al directorio del fichero de suite.
+    Un `path` puede ser un patrón glob (`data/*.parquet`): DuckDB lee todos los
+    ficheros que casen; debe casar al menos uno.
     """
     for name, spec in sources.items():
         path = Path(spec.path)
         if not path.is_absolute():
             path = base_dir / path
-        if not path.exists():
+        if _is_glob(spec.path):
+            if not globlib.glob(str(path), recursive=True):
+                raise SourceError(
+                    f"fuente '{name}': el patrón {path} no coincide con ningún fichero"
+                )
+        elif not path.exists():
             raise SourceError(f"fuente '{name}': no existe el fichero {path}")
-        reader = _READERS.get(path.suffix.lower())
-        if reader is None:
-            supported = ", ".join(sorted(_READERS))
-            raise SourceError(
-                f"fuente '{name}': extensión no soportada '{path.suffix}'. "
-                f"Extensiones soportadas: {supported}"
-            )
+        reader = _reader_for(name, path)
         escaped = str(path).replace("'", "''")
         conn.execute(
             f"CREATE OR REPLACE VIEW {quote_ident(name)} AS SELECT * FROM {reader}('{escaped}')"

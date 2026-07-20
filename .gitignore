@@ -1,0 +1,33 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / build
+build/
+dist/
+*.egg-info/
+*.egg
+wheels/
+
+# Virtual environments (uv usa .venv por defecto)
+.venv/
+venv/
+env/
+.python-version
+
+# Herramientas de test / lint / tipos
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+
+# Editores / SO
+.idea/
+.vscode/
+*.swp
+.DS_Store

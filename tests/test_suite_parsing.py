@@ -220,6 +220,48 @@ def test_regex_match_rejects_invalid_pattern() -> None:
         )
 
 
+def test_severity_defaults_to_error() -> None:
+    spec = parse(
+        """
+        version: 1
+        sources:
+          t: {path: t.csv}
+        checks:
+          t:
+            - unique: id
+        """
+    )
+    assert spec.checks["t"][0].severity == "error"
+
+
+def test_severity_warn_round_trips() -> None:
+    spec = parse(
+        """
+        version: 1
+        sources:
+          t: {path: t.csv}
+        checks:
+          t:
+            - row_count: {min: 1, severity: warn}
+        """
+    )
+    assert spec.checks["t"][0].severity == "warn"
+
+
+def test_severity_rejects_invalid_value() -> None:
+    with pytest.raises(SpecError, match="severity"):
+        parse(
+            """
+            version: 1
+            sources:
+              t: {path: t.csv}
+            checks:
+              t:
+                - row_count: {min: 1, severity: loud}
+            """
+        )
+
+
 def test_custom_sql_strips_trailing_semicolon() -> None:
     spec = parse(
         """
