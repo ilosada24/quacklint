@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import glob as globlib
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -89,8 +89,22 @@ def _create_file_view(
     )
 
 
+def _db_alias(name: str) -> str:
+    return f"_ql_src_{name}"
+
+
+def _qualified_table(name: str, spec: SourceSpec) -> str:
+    assert spec.table is not None
+    parts = [_db_alias(name), *spec.table.split(".")]
+    return ".".join(quote_ident(part) for part in parts)
+
+
 def db_source_statements(name: str, spec: SourceSpec) -> list[str]:
     """The DuckDB statements that attach a database source and expose it as a view.
+
+    The view is metadata-only: no rows move until something queries it. That is
+    what lets the schema pre-check validate against the real remote schema
+    before `materialize_statements` decides which columns are worth copying.
 
     Pure (no execution) so it can be inspected and unit-tested.
     """
@@ -103,26 +117,68 @@ def db_source_statements(name: str, spec: SourceSpec) -> list[str]:
             f"'extension: <duckdb-extension>' naming the extension to load "
             f"(built-in types: {known})"
         )
-    alias = f"_ql_src_{name}"
     conn_literal = "'" + spec.connection.replace("'", "''") + "'"
     read_only = ", READ_ONLY" if spec.read_only else ""
-    qualified = ".".join(
-        [quote_ident(alias)] + [quote_ident(part) for part in spec.table.split(".")]
-    )
     return [
         f"INSTALL {extension}",
         f"LOAD {extension}",
-        f"ATTACH {conn_literal} AS {quote_ident(alias)} (TYPE {spec.type}{read_only})",
-        f"CREATE OR REPLACE VIEW {quote_ident(name)} AS SELECT * FROM {qualified}",
+        f"ATTACH {conn_literal} AS {quote_ident(_db_alias(name))} "
+        f"(TYPE {spec.type}{read_only})",
+        f"CREATE OR REPLACE VIEW {quote_ident(name)} AS "
+        f"SELECT * FROM {_qualified_table(name, spec)}",
     ]
+
+
+def materialize_statements(
+    name: str, spec: SourceSpec, columns: Sequence[str] | None
+) -> list[str]:
+    """Statements that copy a database source into local DuckDB storage.
+
+    Replaces the pass-through view with a real table, so N checks cost one
+    remote read instead of N. `columns` restricts the copy to the columns the
+    checks actually reference; None copies every column.
+
+    Pure (no execution) so it can be inspected and unit-tested.
+    """
+    projection = ", ".join(quote_ident(col) for col in columns) if columns else "*"
+    quoted = quote_ident(name)
+    return [
+        f"CREATE OR REPLACE TABLE {quoted} AS SELECT {projection} "
+        f"FROM {_qualified_table(name, spec)}",
+        # The remote connection is dead weight once the data is local.
+        f"DETACH {quote_ident(_db_alias(name))}",
+    ]
+
+
+def materialize_sources(
+    conn: duckdb.DuckDBPyConnection,
+    sources: Mapping[str, SourceSpec],
+    columns: Mapping[str, Sequence[str] | None] | None = None,
+) -> None:
+    """Materialize every database source configured with `materialize: true`.
+
+    Must run *after* the schema pre-check, which needs the real remote schema.
+    """
+    for name, spec in sources.items():
+        if not (spec.is_database and spec.materialize):
+            continue
+        needed = (columns or {}).get(name)
+        # A view and a table cannot share a name in DuckDB.
+        _execute(conn, name, f"DROP VIEW IF EXISTS {quote_ident(name)}")
+        for statement in materialize_statements(name, spec, needed):
+            _execute(conn, name, statement)
 
 
 def _create_db_view(conn: duckdb.DuckDBPyConnection, name: str, spec: SourceSpec) -> None:
     for statement in db_source_statements(name, spec):
-        try:
-            conn.execute(statement)
-        except duckdb.Error as exc:
-            raise SourceError(f"source '{name}': {exc}") from exc
+        _execute(conn, name, statement)
+
+
+def _execute(conn: duckdb.DuckDBPyConnection, name: str, statement: str) -> None:
+    try:
+        conn.execute(statement)
+    except duckdb.Error as exc:
+        raise SourceError(f"source '{name}': {exc}") from exc
 
 
 def view_columns(conn: duckdb.DuckDBPyConnection, name: str) -> list[str]:

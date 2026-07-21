@@ -1,0 +1,29 @@
+version: 1
+sources:
+  bench_orders:
+    type: postgres
+    connection: postgresql://quacklint:quacklint@localhost:5433/quacklint_demo
+    table: public.bench_orders
+checks:
+  bench_orders:
+    - not_null: [id, customer_id, status]
+    - not_null: [order_ts]
+    - not_null: [coupon_code]
+    - unique: id
+    - row_count: {min: 1}
+    - accepted_values:
+        column: status
+        values: [new, paid, shipped, cancelled]
+    - range: {column: amount, min: 0, max: 1000}
+    - range: {column: priority, min: 0, max: 6}
+    - range: {column: score, min: 0, max: 100}
+    - regex_match: {column: coupon_code, pattern: 'c-[0-9]{4}'}
+    - regex_match: {column: status, pattern: '[a-z]+'}
+    - not_empty_string: [status, coupon_code]
+    - freshness: {column: order_ts, max_age: 2200h}
+    - custom_sql:
+        name: shipped_after_order
+        query: SELECT * FROM bench_orders WHERE shipped_ts < order_ts
+    - custom_sql:
+        name: positive_customer_id
+        query: SELECT * FROM bench_orders WHERE customer_id < 0
