@@ -108,10 +108,22 @@ def run(
         bool,
         typer.Option("--fail-fast", help="Stop at the first error failure (warnings don't stop)."),
     ] = False,
+    select: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--select",
+            "-s",
+            help="Only run checks carrying one of these tags (repeatable).",
+        ),
+    ] = None,
 ) -> None:
     """Run the suite's checks against their sources."""
     suite_file = _resolve_suite_file(suite_file)
     suite = _load_suite(suite_file)
+    if select:
+        suite = suite.select(select)
+        if not any(suite.spec.checks.values()):
+            _err.print(f"[yellow]warning:[/yellow] no checks match tag(s): {', '.join(select)}")
 
     if explain:
         try:

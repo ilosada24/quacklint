@@ -17,8 +17,12 @@ format syntax is in the contract: [spec.yaml.md](spec.yaml.md).
 | [`accepted_values`](#accepted_values) | Every non-null value of the column belongs to the given set. |
 | [`range`](#range) | The non-null values of the column are within [min, max] (inclusive). |
 | [`regex_match`](#regex_match) | Every non-null value of the column fully matches the pattern. |
+| [`not_empty_string`](#not_empty_string) | The given text columns contain no empty or whitespace-only value. |
+| [`string_length`](#string_length) | The character length of the column's non-null values is within [min, max]. |
 | [`freshness`](#freshness) | The most recent value of the column is not older than max_age. |
 | [`row_count`](#row_count) | The source's row count is within [min, max] (inclusive). |
+| [`expected_columns`](#expected_columns) | The source's schema contains the expected columns. |
+| [`relationship`](#relationship) | Every non-null value of the column exists in another source's column. |
 | [`custom_sql`](#custom_sql) | Arbitrary SQL query whose result rows are the violations. |
 
 ## not_null
@@ -111,6 +115,42 @@ Generated SQL (example):
 SELECT * FROM "trips" WHERE "trip_id" IS NOT NULL AND NOT regexp_full_match("trip_id", 't-[0-9]{3}')
 ```
 
+## not_empty_string
+
+The given text columns contain no empty or whitespace-only value.
+
+```yaml
+- not_empty_string: email          # shorthand: a single column
+- not_empty_string: [name, email]  # multiple columns
+```
+
+A non-null value counts as a violation when it is empty or contains only
+whitespace. NULLs do not count (use `not_null` to require presence).
+
+Generated SQL (example):
+
+```sql
+SELECT * FROM "trips" WHERE ("trip_id" IS NOT NULL AND length(trim("trip_id")) = 0)
+```
+
+## string_length
+
+The character length of the column's non-null values is within [min, max].
+
+```yaml
+- string_length: {column: code, min: 3, max: 10}
+- string_length: {column: code, min: 1}    # lower bound only
+```
+
+At least one of `min` / `max` is required (character counts, integers >= 0).
+NULLs do not count as a violation.
+
+Generated SQL (example):
+
+```sql
+SELECT * FROM "trips" WHERE "trip_id" IS NOT NULL AND (length("trip_id") < 3 OR length("trip_id") > 16)
+```
+
 ## freshness
 
 The most recent value of the column is not older than max_age.
@@ -148,6 +188,43 @@ Generated SQL (example):
 
 ```sql
 SELECT count(*) AS row_count FROM "trips" HAVING count(*) < 1 OR count(*) > 100000
+```
+
+## expected_columns
+
+The source's schema contains the expected columns.
+
+```yaml
+- expected_columns: [trip_id, fare, pickup_ts]      # these must be present
+- expected_columns: {columns: [trip_id, fare], exact: true}  # exactly these
+```
+
+A schema-drift guard. Each violation row names a column that is `missing`
+(expected but absent) or, when `exact: true`, `unexpected` (present but not
+listed). Compiles to a real query over `DESCRIBE`, so `--explain` shows it.
+
+Generated SQL (example):
+
+```sql
+SELECT name AS "column", 'missing' AS issue FROM (VALUES ('trip_id'), ('pickup_ts')) AS _expected(name) WHERE name NOT IN (SELECT column_name FROM (DESCRIBE "trips"))
+```
+
+## relationship
+
+Every non-null value of the column exists in another source's column.
+
+```yaml
+- relationship: {column: customer_id, to: customers, to_column: id}
+```
+
+A referential-integrity (foreign-key) check across sources: a row violates
+the rule when its `column` value is not present in `to.to_column`. NULLs on
+either side do not count as a violation. `to` must be a declared source.
+
+Generated SQL (example):
+
+```sql
+SELECT * FROM "trips" WHERE "payment_type" IS NOT NULL AND "payment_type" NOT IN (SELECT "code" FROM "payment_types" WHERE "code" IS NOT NULL)
 ```
 
 ## custom_sql

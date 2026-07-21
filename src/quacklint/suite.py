@@ -7,6 +7,7 @@ reflected there and vice versa.
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -90,11 +91,42 @@ def format_duration(delta: timedelta) -> str:
 
 
 class SourceSpec(BaseModel):
-    """A data source: a file exposed as a DuckDB view."""
+    """A data source exposed as a DuckDB view.
+
+    Either a **file** (`path`, possibly a glob) or a **database** attached via
+    DuckDB (`type` + `connection` + `table`), not both.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    path: str = Field(min_length=1)
+    path: str | None = Field(default=None, min_length=1)
+    # Database-backed source (DuckDB ATTACH):
+    type: str | None = Field(default=None, min_length=1)
+    connection: str | None = Field(default=None, min_length=1)
+    table: str | None = Field(default=None, min_length=1)
+    extension: str | None = Field(default=None, min_length=1)
+    read_only: bool = True
+
+    @property
+    def is_database(self) -> bool:
+        return self.path is None
+
+    @model_validator(mode="after")
+    def _validate_shape(self) -> SourceSpec:
+        db_fields = (self.type, self.connection, self.table, self.extension)
+        has_db = any(v is not None for v in db_fields)
+        if self.path is not None:
+            if has_db:
+                raise ValueError(
+                    "a source is either a file ('path') or a database "
+                    "('type'/'connection'/'table'), not both"
+                )
+            return self
+        if not (self.type and self.connection and self.table):
+            raise ValueError(
+                "a source needs 'path' (file) or 'type'+'connection'+'table' (database)"
+            )
+        return self
 
 
 class BaseCheckSpec(BaseModel):
@@ -103,8 +135,25 @@ class BaseCheckSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     check_type: ClassVar[str]
+    # Row-level checks tolerate a bounded number of violations; single-verdict
+    # checks (row_count, freshness) override this to reject tolerance config.
+    supports_tolerance: ClassVar[bool] = True
 
     severity: Severity = "error"
+    max_failed_rows: int | None = Field(default=None, ge=0)
+    max_failed_pct: float | None = Field(default=None, ge=0, le=100)
+    tags: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_tolerance(self) -> BaseCheckSpec:
+        if (
+            self.max_failed_rows is not None or self.max_failed_pct is not None
+        ) and not self.supports_tolerance:
+            raise ValueError(
+                f"{self.check_type} does not support tolerance "
+                "(max_failed_rows/max_failed_pct)"
+            )
+        return self
 
     @classmethod
     def coerce_payload(cls, payload: Any) -> Any:
@@ -118,6 +167,13 @@ class BaseCheckSpec(BaseModel):
     def required_column_types(self) -> tuple[tuple[str, ColumnCategory], ...]:
         """(column, category) pairs whose type is validated before running."""
         return ()
+
+    def referenced_foreign(self) -> tuple[tuple[str, str], ...]:
+        """(other_source, column) pairs this check references in another source."""
+        return ()
+
+    def validate_against_sources(self, sources: dict[str, SourceSpec]) -> None:
+        """Validate cross-source references at parse time (no schema needed)."""
 
 
 class NotNullSpec(BaseCheckSpec):
@@ -208,8 +264,51 @@ class RegexMatchSpec(BaseCheckSpec):
         return ((self.column, "string"),)
 
 
+class NotEmptyStringSpec(BaseCheckSpec):
+    check_type: ClassVar[str] = "not_empty_string"
+
+    columns: list[str] = Field(min_length=1)
+
+    @classmethod
+    def coerce_payload(cls, payload: Any) -> Any:
+        if isinstance(payload, str):
+            return {"columns": [payload]}
+        if isinstance(payload, list):
+            return {"columns": payload}
+        return payload
+
+    def referenced_columns(self) -> tuple[str, ...]:
+        return tuple(self.columns)
+
+    def required_column_types(self) -> tuple[tuple[str, ColumnCategory], ...]:
+        return tuple((column, "string") for column in self.columns)
+
+
+class StringLengthSpec(BaseCheckSpec):
+    check_type: ClassVar[str] = "string_length"
+
+    column: str = Field(min_length=1)
+    min: int | None = Field(default=None, ge=0)
+    max: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_bounds(self) -> StringLengthSpec:
+        if self.min is None and self.max is None:
+            raise ValueError("needs at least 'min' or 'max'")
+        if self.min is not None and self.max is not None and self.min > self.max:
+            raise ValueError(f"'min' ({self.min}) cannot be greater than 'max' ({self.max})")
+        return self
+
+    def referenced_columns(self) -> tuple[str, ...]:
+        return (self.column,)
+
+    def required_column_types(self) -> tuple[tuple[str, ColumnCategory], ...]:
+        return ((self.column, "string"),)
+
+
 class RowCountSpec(BaseCheckSpec):
     check_type: ClassVar[str] = "row_count"
+    supports_tolerance: ClassVar[bool] = False
 
     min: int | None = Field(default=None, ge=0)
     max: int | None = Field(default=None, ge=0)
@@ -223,8 +322,26 @@ class RowCountSpec(BaseCheckSpec):
         return self
 
 
+class ExpectedColumnsSpec(BaseCheckSpec):
+    check_type: ClassVar[str] = "expected_columns"
+    supports_tolerance: ClassVar[bool] = False
+
+    columns: list[str] = Field(min_length=1)
+    exact: bool = False
+
+    @classmethod
+    def coerce_payload(cls, payload: Any) -> Any:
+        if isinstance(payload, list):
+            return {"columns": payload}
+        return payload
+
+    # No referenced_columns(): this check asserts which columns exist, so its
+    # columns must NOT be required to pre-exist by the schema pre-check.
+
+
 class FreshnessSpec(BaseCheckSpec):
     check_type: ClassVar[str] = "freshness"
+    supports_tolerance: ClassVar[bool] = False
 
     column: str = Field(min_length=1)
     max_age: timedelta
@@ -260,6 +377,28 @@ class CustomSqlSpec(BaseCheckSpec):
         return stripped
 
 
+class RelationshipSpec(BaseCheckSpec):
+    check_type: ClassVar[str] = "relationship"
+
+    column: str = Field(min_length=1)
+    to: str = Field(min_length=1)
+    to_column: str = Field(min_length=1)
+
+    def referenced_columns(self) -> tuple[str, ...]:
+        return (self.column,)
+
+    def referenced_foreign(self) -> tuple[tuple[str, str], ...]:
+        return ((self.to, self.to_column),)
+
+    def validate_against_sources(self, sources: dict[str, SourceSpec]) -> None:
+        if self.to not in sources:
+            declared = ", ".join(sorted(sources))
+            raise ValueError(
+                f"'to' references source '{self.to}', which is not declared in "
+                f"'sources'. Declared sources: {declared}"
+            )
+
+
 CHECK_SPEC_TYPES: dict[str, type[BaseCheckSpec]] = {
     cls.check_type: cls
     for cls in (
@@ -268,11 +407,23 @@ CHECK_SPEC_TYPES: dict[str, type[BaseCheckSpec]] = {
         AcceptedValuesSpec,
         RangeSpec,
         RegexMatchSpec,
+        NotEmptyStringSpec,
+        StringLengthSpec,
         RowCountSpec,
+        ExpectedColumnsSpec,
         FreshnessSpec,
+        RelationshipSpec,
         CustomSqlSpec,
     )
 }
+
+
+class DefaultsSpec(BaseModel):
+    """Suite-wide defaults applied to checks that don't set the field themselves."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    severity: Severity = "error"
 
 
 class SuiteSpec(BaseModel):
@@ -355,11 +506,45 @@ def _parse_checks(raw: Any, sources: dict[str, SourceSpec]) -> dict[str, list[Ba
             )
         if not isinstance(entries, list):
             _fail(location, "must be a list of checks (each item: '- <check>: <config>')")
-        checks[source_name] = [
+        parsed = [
             _parse_check_entry(f"{location}[{index}]", entry)
             for index, entry in enumerate(entries)
         ]
+        for index, spec in enumerate(parsed):
+            try:
+                spec.validate_against_sources(sources)
+            except ValueError as exc:
+                _fail(f"{location}[{index}] ({spec.check_type})", str(exc))
+        checks[source_name] = parsed
     return checks
+
+
+def _parse_defaults(raw: Any) -> DefaultsSpec:
+    if raw is None:
+        return DefaultsSpec()
+    if not isinstance(raw, dict):
+        _fail("defaults", "must be a mapping (e.g. 'defaults: {severity: warn}')")
+    try:
+        return DefaultsSpec.model_validate(raw)
+    except ValidationError as exc:
+        _fail("defaults", _format_validation_error(exc))
+
+
+def _apply_defaults(
+    checks: dict[str, list[BaseCheckSpec]], defaults: DefaultsSpec
+) -> dict[str, list[BaseCheckSpec]]:
+    """Fill in a check's severity from the suite default when it set none."""
+    if defaults.severity == "error":
+        return checks
+    return {
+        source: [
+            spec.model_copy(update={"severity": defaults.severity})
+            if "severity" not in spec.model_fields_set
+            else spec
+            for spec in entries
+        ]
+        for source, entries in checks.items()
+    }
 
 
 def parse_suite(data: Any) -> SuiteSpec:
@@ -369,12 +554,12 @@ def parse_suite(data: Any) -> SuiteSpec:
             "the suite must be a YAML mapping with the keys 'version', 'sources' and 'checks' "
             "(see docs/spec.yaml.md)"
         )
-    unknown = set(data) - {"version", "sources", "checks"}
+    unknown = set(data) - {"version", "sources", "checks", "defaults"}
     if unknown:
         _fail(
             "suite",
             f"unknown keys: {', '.join(sorted(str(key) for key in unknown))}. "
-            "Valid keys: version, sources, checks",
+            "Valid keys: version, sources, checks, defaults",
         )
     if "version" not in data:
         _fail("version", "missing; add 'version: 1' at the top of the suite")
@@ -384,8 +569,9 @@ def parse_suite(data: Any) -> SuiteSpec:
             f"unsupported version: {data['version']!r}. "
             f"This quacklint version supports 'version: {SUPPORTED_VERSION}'",
         )
+    defaults = _parse_defaults(data.get("defaults"))
     sources = _parse_sources(data.get("sources"))
-    checks = _parse_checks(data.get("checks"), sources)
+    checks = _apply_defaults(_parse_checks(data.get("checks"), sources), defaults)
     return SuiteSpec(version=SUPPORTED_VERSION, sources=sources, checks=checks)
 
 
@@ -427,6 +613,21 @@ class Suite:
         suite_path = Path(path)
         spec = load_suite(suite_path)
         return cls(spec=spec, base_dir=suite_path.resolve().parent)
+
+    def select(self, tags: Collection[str]) -> Suite:
+        """Return a Suite keeping only checks that carry at least one of `tags`.
+
+        An empty `tags` selects everything (no filtering).
+        """
+        if not tags:
+            return self
+        wanted = set(tags)
+        filtered = {
+            source: kept
+            for source, entries in self.spec.checks.items()
+            if (kept := [spec for spec in entries if wanted.intersection(spec.tags)])
+        }
+        return Suite(spec=self.spec.model_copy(update={"checks": filtered}), base_dir=self.base_dir)
 
     def compile(self) -> list[CompiledCheck]:
         """Compile each check to its violations SQL, without running anything."""
@@ -496,4 +697,11 @@ class Suite:
                             f"{location}: column '{column}' has type {actual}, but "
                             f"{check_spec.check_type} requires a "
                             f"{_CATEGORY_LABEL[category]} column"
+                        )
+                for fsource, fcolumn in check_spec.referenced_foreign():
+                    ftypes = view_column_types(conn, fsource)
+                    if fcolumn not in ftypes:
+                        raise SpecError(
+                            f"{location}: column '{fcolumn}' does not exist in source "
+                            f"'{fsource}'. Available columns: {', '.join(ftypes)}"
                         )

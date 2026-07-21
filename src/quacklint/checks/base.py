@@ -40,6 +40,7 @@ class CheckResult:
     sample_columns: tuple[str, ...] = ()
     sample_rows: tuple[tuple[object, ...], ...] = ()
     severity: Severity = "error"
+    tolerated: bool = False
 
 
 class Check(ABC):
@@ -51,6 +52,9 @@ class Check(ABC):
     def __init__(self, source: str, severity: Severity = "error") -> None:
         self.source = source
         self.severity = severity
+        # Set from the spec by build_check; None means "no tolerance".
+        self.max_failed_rows: int | None = None
+        self.max_failed_pct: float | None = None
 
     @property
     def display_name(self) -> str:
@@ -83,16 +87,52 @@ class Check(ABC):
                 severity=self.severity,
             )
         columns, sample = self._sample(conn, sql)
+        tolerated = self._within_tolerance(conn, failed_rows)
+        base = f"{failed_rows} row(s) violate the rule"
+        message = (
+            f"{base}, within tolerance ({self._tolerance_desc()})"
+            if tolerated
+            else f"{base}{self._tolerance_suffix()}"
+        )
         return CheckResult(
             check=self.display_name,
             source=self.source,
-            passed=False,
+            passed=tolerated,
             failed_rows=failed_rows,
-            message=f"{failed_rows} row(s) violate the rule",
+            message=message,
             sample_columns=columns,
             sample_rows=sample,
             severity=self.severity,
+            tolerated=tolerated,
         )
+
+    def _within_tolerance(self, conn: duckdb.DuckDBPyConnection, failed_rows: int) -> bool:
+        """Whether `failed_rows` stays within every configured tolerance limit."""
+        if self.max_failed_rows is None and self.max_failed_pct is None:
+            return False
+        if self.max_failed_rows is not None and failed_rows > self.max_failed_rows:
+            return False
+        if self.max_failed_pct is not None:
+            total = self._total_rows(conn)
+            pct = (100.0 * failed_rows / total) if total else 0.0
+            if pct > self.max_failed_pct:
+                return False
+        return True
+
+    def _total_rows(self, conn: duckdb.DuckDBPyConnection) -> int:
+        row = self._fetchone(conn, f"SELECT count(*) FROM {quote_ident(self.source)}")
+        return int(row[0]) if row is not None else 0
+
+    def _tolerance_desc(self) -> str:
+        parts: list[str] = []
+        if self.max_failed_rows is not None:
+            parts.append(f"max_failed_rows={self.max_failed_rows}")
+        if self.max_failed_pct is not None:
+            parts.append(f"max_failed_pct={self.max_failed_pct}")
+        return ", ".join(parts)
+
+    def _tolerance_suffix(self) -> str:
+        return f" (exceeds tolerance: {self._tolerance_desc()})" if self._tolerance_desc() else ""
 
     def _sample(
         self, conn: duckdb.DuckDBPyConnection, sql: str
@@ -159,6 +199,8 @@ def build_check(source: str, spec: BaseCheckSpec) -> Check:
     """Instantiate the registered implementation for a check configuration."""
     check = get_check(spec.check_type).from_spec(source, spec)
     check.severity = spec.severity
+    check.max_failed_rows = spec.max_failed_rows
+    check.max_failed_pct = spec.max_failed_pct
     return check
 
 

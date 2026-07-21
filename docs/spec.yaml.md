@@ -36,9 +36,20 @@ error):
 
 | Key       | Required | Type    | Description                                     |
 | --------- | -------- | ------- | ----------------------------------------------- |
-| `version` | yes      | integer | Format version. Only `1` is accepted.          |
-| `sources` | yes      | mapping | Data sources. At least one.                    |
-| `checks`  | no       | mapping | Checks per source. May be omitted or empty.    |
+| `version`  | yes      | integer | Format version. Only `1` is accepted.         |
+| `sources`  | yes      | mapping | Data sources. At least one.                   |
+| `checks`   | no       | mapping | Checks per source. May be omitted or empty.   |
+| `defaults` | no       | mapping | Suite-wide defaults (currently `severity`).   |
+
+## `defaults`
+
+Optional suite-wide defaults applied to any check that does not set the field
+itself (an explicit value on a check always wins):
+
+```yaml
+defaults:
+  severity: warn        # every check defaults to warn unless it sets its own
+```
 
 ## `sources`
 
@@ -59,6 +70,36 @@ sources:
   DuckDB unions all matching files into a single view. The pattern must match at
   least one file (otherwise it's a source error) and all files must share the
   reader implied by the pattern's extension.
+
+### Database sources
+
+Instead of `path`, a source can point at a database that DuckDB attaches. The
+source is exposed as a read-only view over the given table, and every check
+works against it unchanged.
+
+```yaml
+sources:
+  customers:
+    type: postgres                          # postgres | mysql | sqlite | ...
+    connection: "host=db dbname=shop user=ro"
+    table: public.customers                 # schema-qualified table to expose
+```
+
+| Field        | Required | Description                                                     |
+| ------------ | -------- | --------------------------------------------------------------- |
+| `type`       | yes      | Backend / DuckDB `ATTACH` type. Built-in: `postgres`, `mysql`, `sqlite`. |
+| `connection` | yes      | Connection string / DSN / file path passed to `ATTACH`.         |
+| `table`      | yes      | Table to expose (may be `schema.table`).                        |
+| `extension`  | no       | DuckDB extension to install/load. Inferred for built-in types.  |
+| `read_only`  | no       | Attach read-only (default `true`).                              |
+
+- A source is **either** a file (`path`) **or** a database (`type`/`connection`/
+  `table`), never both.
+- Built-in types use DuckDB core extensions. Other backends — e.g. **ClickHouse**
+  via a community extension — work by naming the extension explicitly:
+  `{type: clickhouse, extension: <duckdb-extension>, connection: ..., table: ...}`.
+  DuckDB must be able to `INSTALL`/`LOAD` that extension (needs network on first
+  use); ClickHouse support is community-provided and not part of DuckDB core.
 
 ## `checks`
 
@@ -95,6 +136,35 @@ default) or `warn`:
   run continues; it only stops at the first `severity: error` failure.
 - `severity` can only be set in the mapping form of a check (not in the
   shorthand forms like `- not_null: trip_id`).
+
+#### tags
+
+Any check accepts an optional `tags` list. Tags let you run a subset of the
+suite with `quacklint run --select <tag>` (repeatable); a check runs if it
+carries at least one selected tag.
+
+```yaml
+- unique: {columns: [trip_id], tags: [critical, pk]}
+```
+
+#### tolerance
+
+Row-level checks accept optional tolerance limits so a small number of
+violations doesn't fail the check:
+
+```yaml
+- not_null: {columns: [email], max_failed_rows: 10}
+- accepted_values: {column: status, values: [a, b], max_failed_pct: 0.5}
+```
+
+- `max_failed_rows` (integer `>= 0`): pass if at most this many rows violate.
+- `max_failed_pct` (number `0`–`100`): pass if at most this percentage of the
+  source's rows violate.
+- If both are given, the check passes only when **both** limits hold.
+- A tolerated pass is still reported (the row shows `PASS` with the violation
+  count and a "within tolerance" note; JSON sets `"tolerated": true`).
+- Only checks that count violating rows support tolerance. `row_count` and
+  `freshness` (single-verdict checks) **reject** it with a configuration error.
 
 ### `not_null`
 
@@ -168,6 +238,44 @@ Every non-null value of the column matches the regular expression.
 - RE2 syntax (DuckDB's); the pattern is validated when the suite is loaded.
 - `NULL`s do not count as a violation.
 
+### `not_empty_string`
+
+The given text columns contain no empty or whitespace-only value.
+
+```yaml
+- not_empty_string: email          # shorthand: a single column
+- not_empty_string: [name, email]  # multiple columns
+```
+
+`NULL`s do not count as a violation (use `not_null` to require presence).
+
+### `string_length`
+
+The character length of the column's non-null values is within the bounds
+(inclusive).
+
+```yaml
+- string_length: {column: code, min: 3, max: 10}
+- string_length: {column: code, min: 1}    # lower bound only
+```
+
+- At least one of `min` / `max` is required (integers `>= 0`).
+- `NULL`s do not count as a violation.
+
+### `expected_columns`
+
+Schema-drift guard: the source must contain the expected columns.
+
+```yaml
+- expected_columns: [trip_id, fare, pickup_ts]              # must be present
+- expected_columns: {columns: [trip_id, fare], exact: true} # exactly these
+```
+
+- Default: every listed column must exist (extra columns are allowed).
+- `exact: true`: the schema must be exactly the listed columns (extra columns
+  are violations too).
+- Each violation names a `missing` or `unexpected` column.
+
 ### `freshness`
 
 The most recent value of the timestamp column is not older than `max_age`
@@ -185,6 +293,20 @@ relative to run time.
   time zone; a tz-naive column is read as UTC.
 - If the source is empty or the column is all `NULL`, the check **passes** (use
   `row_count` and `not_null` to require data).
+
+### `relationship`
+
+Referential integrity across sources: every non-null value of the column must
+exist in another source's column.
+
+```yaml
+- relationship: {column: customer_id, to: customers, to_column: id}
+```
+
+- `to` must be a **declared source**; it is validated at parse time.
+- `to_column` must exist in that source (validated against its schema).
+- `NULL`s on either side do not count as a violation (use `not_null` to require
+  presence).
 
 ### `custom_sql`
 
