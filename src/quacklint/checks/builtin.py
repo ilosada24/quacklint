@@ -13,11 +13,15 @@ from quacklint.suite import (
     AcceptedValuesSpec,
     BaseCheckSpec,
     CustomSqlSpec,
+    ExpectedColumnsSpec,
     FreshnessSpec,
+    NotEmptyStringSpec,
     NotNullSpec,
     RangeSpec,
     RegexMatchSpec,
+    RelationshipSpec,
     RowCountSpec,
+    StringLengthSpec,
     UniqueSpec,
     format_duration,
 )
@@ -200,6 +204,77 @@ class RegexMatchCheck(Check):
         )
 
 
+@register("not_empty_string")
+class NotEmptyStringCheck(Check):
+    """The given text columns contain no empty or whitespace-only value.
+
+    ```yaml
+    - not_empty_string: email          # shorthand: a single column
+    - not_empty_string: [name, email]  # multiple columns
+    ```
+
+    A non-null value counts as a violation when it is empty or contains only
+    whitespace. NULLs do not count (use `not_null` to require presence).
+    """
+
+    def __init__(self, source: str, columns: list[str]) -> None:
+        super().__init__(source)
+        self.columns = columns
+
+    @classmethod
+    def from_spec(cls, source: str, spec: BaseCheckSpec) -> NotEmptyStringCheck:
+        assert isinstance(spec, NotEmptyStringSpec)
+        return cls(source, spec.columns)
+
+    def to_sql(self, source: str) -> str:
+        condition = " OR ".join(
+            f"({quote_ident(col)} IS NOT NULL AND length(trim({quote_ident(col)})) = 0)"
+            for col in self.columns
+        )
+        return f"SELECT * FROM {quote_ident(source)} WHERE {condition}"
+
+
+@register("string_length")
+class StringLengthCheck(Check):
+    """The character length of the column's non-null values is within [min, max].
+
+    ```yaml
+    - string_length: {column: code, min: 3, max: 10}
+    - string_length: {column: code, min: 1}    # lower bound only
+    ```
+
+    At least one of `min` / `max` is required (character counts, integers >= 0).
+    NULLs do not count as a violation.
+    """
+
+    def __init__(
+        self, source: str, column: str, min_length: int | None, max_length: int | None
+    ) -> None:
+        if min_length is None and max_length is None:
+            raise ValueError("string_length needs at least min or max")
+        super().__init__(source)
+        self.column = column
+        self.min_length = min_length
+        self.max_length = max_length
+
+    @classmethod
+    def from_spec(cls, source: str, spec: BaseCheckSpec) -> StringLengthCheck:
+        assert isinstance(spec, StringLengthSpec)
+        return cls(source, spec.column, spec.min, spec.max)
+
+    def to_sql(self, source: str) -> str:
+        col = quote_ident(self.column)
+        bounds: list[str] = []
+        if self.min_length is not None:
+            bounds.append(f"length({col}) < {self.min_length}")
+        if self.max_length is not None:
+            bounds.append(f"length({col}) > {self.max_length}")
+        return (
+            f"SELECT * FROM {quote_ident(source)} "
+            f"WHERE {col} IS NOT NULL AND ({' OR '.join(bounds)})"
+        )
+
+
 @register("freshness")
 class FreshnessCheck(Check):
     """The most recent value of the column is not older than max_age.
@@ -321,6 +396,82 @@ class RowCountCheck(Check):
         if self.min_rows is not None:
             return f"at least {self.min_rows}"
         return f"at most {self.max_rows}"
+
+
+@register("expected_columns")
+class ExpectedColumnsCheck(Check):
+    """The source's schema contains the expected columns.
+
+    ```yaml
+    - expected_columns: [trip_id, fare, pickup_ts]      # these must be present
+    - expected_columns: {columns: [trip_id, fare], exact: true}  # exactly these
+    ```
+
+    A schema-drift guard. Each violation row names a column that is `missing`
+    (expected but absent) or, when `exact: true`, `unexpected` (present but not
+    listed). Compiles to a real query over `DESCRIBE`, so `--explain` shows it.
+    """
+
+    def __init__(self, source: str, columns: list[str], exact: bool) -> None:
+        super().__init__(source)
+        self.columns = columns
+        self.exact = exact
+
+    @classmethod
+    def from_spec(cls, source: str, spec: BaseCheckSpec) -> ExpectedColumnsCheck:
+        assert isinstance(spec, ExpectedColumnsSpec)
+        return cls(source, spec.columns, spec.exact)
+
+    def to_sql(self, source: str) -> str:
+        values = ", ".join(f"({_sql_literal(col)})" for col in self.columns)
+        expected = f"(VALUES {values}) AS _expected(name)"
+        actual = f"(DESCRIBE {quote_ident(source)})"
+        missing = (
+            f"SELECT name AS \"column\", 'missing' AS issue FROM {expected} "
+            f"WHERE name NOT IN (SELECT column_name FROM {actual})"
+        )
+        if not self.exact:
+            return missing
+        unexpected = (
+            f"SELECT column_name AS \"column\", 'unexpected' AS issue FROM {actual} "
+            f"WHERE column_name NOT IN (SELECT name FROM {expected})"
+        )
+        return f"{missing} UNION ALL {unexpected}"
+
+
+@register("relationship")
+class RelationshipCheck(Check):
+    """Every non-null value of the column exists in another source's column.
+
+    ```yaml
+    - relationship: {column: customer_id, to: customers, to_column: id}
+    ```
+
+    A referential-integrity (foreign-key) check across sources: a row violates
+    the rule when its `column` value is not present in `to.to_column`. NULLs on
+    either side do not count as a violation. `to` must be a declared source.
+    """
+
+    def __init__(self, source: str, column: str, to: str, to_column: str) -> None:
+        super().__init__(source)
+        self.column = column
+        self.to = to
+        self.to_column = to_column
+
+    @classmethod
+    def from_spec(cls, source: str, spec: BaseCheckSpec) -> RelationshipCheck:
+        assert isinstance(spec, RelationshipSpec)
+        return cls(source, spec.column, spec.to, spec.to_column)
+
+    def to_sql(self, source: str) -> str:
+        col = quote_ident(self.column)
+        target = quote_ident(self.to)
+        target_col = quote_ident(self.to_column)
+        return (
+            f"SELECT * FROM {quote_ident(source)} "
+            f"WHERE {col} IS NOT NULL AND {col} NOT IN "
+            f"(SELECT {target_col} FROM {target} WHERE {target_col} IS NOT NULL)"
+        )
 
 
 @register("custom_sql")

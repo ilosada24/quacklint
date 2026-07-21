@@ -181,6 +181,58 @@ def test_run_fail_fast_does_not_stop_on_warning(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# tags + --select
+# ---------------------------------------------------------------------------
+
+
+def test_run_select_filters_by_tag(tmp_path: Path) -> None:
+    _write_parquet(
+        tmp_path / "trips.parquet",
+        "SELECT * FROM (VALUES ('a', 1), ('a', 2), (NULL, 3)) AS v(trip_id, n)",
+    )
+    suite = _write_suite(
+        tmp_path,
+        "    - unique: {columns: [trip_id], tags: [critical]}\n"
+        "    - not_null: {columns: [trip_id], tags: [other]}",
+    )
+    result = runner.invoke(app, ["run", str(suite), "--select", "critical", "-f", "json"])
+    payload = json.loads(result.output)
+    assert payload["total"] == 1
+    assert payload["checks"][0]["check"] == "unique"
+
+
+def test_run_select_no_match_warns_and_exits_0(tmp_path: Path) -> None:
+    _write_parquet(
+        tmp_path / "trips.parquet",
+        "SELECT * FROM (VALUES ('a', 1)) AS v(trip_id, n)",
+    )
+    suite = _write_suite(tmp_path, "    - unique: {columns: [trip_id], tags: [x]}")
+    result = runner.invoke(app, ["run", str(suite), "--select", "nope"])
+    assert result.exit_code == 0
+    assert "0/0 checks OK" in result.output
+
+
+# ---------------------------------------------------------------------------
+# tolerances
+# ---------------------------------------------------------------------------
+
+
+def test_run_tolerance_passes_and_exit_0(tmp_path: Path) -> None:
+    _write_parquet(
+        tmp_path / "trips.parquet",
+        "SELECT * FROM (VALUES ('a', 1), (NULL, 2)) AS v(trip_id, n)",  # 1 null
+    )
+    suite = _write_suite(tmp_path, "    - not_null: {columns: [trip_id], max_failed_rows: 1}")
+    result = runner.invoke(app, ["run", str(suite), "-f", "json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["passed"] is True
+    check = payload["checks"][0]
+    assert check["tolerated"] is True
+    assert check["failed_rows"] == 1
+
+
+# ---------------------------------------------------------------------------
 # configuration errors → exit 2
 # ---------------------------------------------------------------------------
 

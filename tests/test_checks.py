@@ -17,16 +17,20 @@ import pytest
 import quacklint.checks.builtin  # noqa: F401  (registers the built-in checks)
 from quacklint.checks.base import build_check, get_check
 from quacklint.errors import ExecutionError, SourceError, SpecError
-from quacklint.sources import create_views
+from quacklint.sources import create_views, db_source_statements
 from quacklint.suite import (
     AcceptedValuesSpec,
     CustomSqlSpec,
+    ExpectedColumnsSpec,
     FreshnessSpec,
+    NotEmptyStringSpec,
     NotNullSpec,
     RangeSpec,
     RegexMatchSpec,
+    RelationshipSpec,
     RowCountSpec,
     SourceSpec,
+    StringLengthSpec,
     Suite,
     UniqueSpec,
 )
@@ -421,6 +425,161 @@ def test_custom_sql_handles_trailing_semicolon(
 
 
 # ---------------------------------------------------------------------------
+# not_empty_string / string_length / expected_columns
+# ---------------------------------------------------------------------------
+
+
+def test_not_empty_string_counts_blank_values(
+    conn: duckdb.DuckDBPyConnection, make_parquet: MakeParquet
+) -> None:
+    make_parquet("t", "SELECT * FROM (VALUES ('ok'), (''), ('   '), (NULL)) AS v(name)")
+    result = build_check("t", NotEmptyStringSpec(columns=["name"])).evaluate(conn)
+    assert not result.passed
+    assert result.failed_rows == 2  # '' and '   '; NULL ignored
+
+
+def test_string_length_bounds(
+    conn: duckdb.DuckDBPyConnection, make_parquet: MakeParquet
+) -> None:
+    make_parquet("t", "SELECT * FROM (VALUES ('ab'), ('abcd'), ('abcdefghij')) AS v(code)")
+    result = build_check("t", StringLengthSpec(column="code", min=3, max=6)).evaluate(conn)
+    assert not result.passed
+    assert result.failed_rows == 2  # 'ab' (too short) and the 10-char one (too long)
+
+
+def test_expected_columns_reports_missing(
+    conn: duckdb.DuckDBPyConnection, make_parquet: MakeParquet
+) -> None:
+    make_parquet("t", "SELECT 1 AS a, 2 AS b")
+    result = build_check("t", ExpectedColumnsSpec(columns=["a", "c"])).evaluate(conn)
+    assert not result.passed
+    assert result.failed_rows == 1  # 'c' missing
+    assert result.sample_rows == (("c", "missing"),)
+
+
+def test_expected_columns_exact_flags_extra(
+    conn: duckdb.DuckDBPyConnection, make_parquet: MakeParquet
+) -> None:
+    make_parquet("t", "SELECT 1 AS a, 2 AS b")
+    result = build_check("t", ExpectedColumnsSpec(columns=["a"], exact=True)).evaluate(conn)
+    assert not result.passed
+    assert result.failed_rows == 1  # 'b' is unexpected
+    assert result.sample_rows == (("b", "unexpected"),)
+
+
+def test_expected_columns_passes_when_present(
+    conn: duckdb.DuckDBPyConnection, make_parquet: MakeParquet
+) -> None:
+    make_parquet("t", "SELECT 1 AS a, 2 AS b")
+    assert build_check("t", ExpectedColumnsSpec(columns=["a", "b"])).evaluate(conn).passed
+
+
+# ---------------------------------------------------------------------------
+# relationship (cross-source foreign key)
+# ---------------------------------------------------------------------------
+
+
+def test_relationship_passes_when_all_values_exist(
+    conn: duckdb.DuckDBPyConnection, make_parquet: MakeParquet
+) -> None:
+    make_parquet("orders", "SELECT * FROM (VALUES (1, 'a'), (2, 'b')) AS v(id, cust)")
+    make_parquet("customers", "SELECT * FROM (VALUES ('a'), ('b'), ('c')) AS v(code)")
+    spec = RelationshipSpec(column="cust", to="customers", to_column="code")
+    result = build_check("orders", spec).evaluate(conn)
+    assert result.passed
+
+
+def test_relationship_counts_orphans(
+    conn: duckdb.DuckDBPyConnection, make_parquet: MakeParquet
+) -> None:
+    make_parquet("orders", "SELECT * FROM (VALUES (1, 'a'), (2, 'x'), (3, NULL)) AS v(id, cust)")
+    make_parquet("customers", "SELECT * FROM (VALUES ('a'), ('b')) AS v(code)")
+    spec = RelationshipSpec(column="cust", to="customers", to_column="code")
+    result = build_check("orders", spec).evaluate(conn)
+    assert not result.passed
+    assert result.failed_rows == 1  # only 'x'; NULL is ignored
+
+
+def test_relationship_undeclared_target_is_config_error(tmp_path: Path) -> None:
+    _write_trips_parquet(tmp_path / "trips.parquet")
+    (tmp_path / "suite.yaml").write_text(
+        dedent(
+            """\
+            version: 1
+            sources:
+              trips:
+                path: trips.parquet
+            checks:
+              trips:
+                - relationship: {column: trip_id, to: nope, to_column: id}
+            """
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SpecError, match=r"'to' references source 'nope'.*not declared"):
+        Suite.from_file(tmp_path / "suite.yaml").run()
+
+
+def test_relationship_missing_target_column_is_config_error(tmp_path: Path) -> None:
+    _write_trips_parquet(tmp_path / "trips.parquet")
+    (tmp_path / "ref.csv").write_text("id\na\n", encoding="utf-8")
+    (tmp_path / "suite.yaml").write_text(
+        dedent(
+            """\
+            version: 1
+            sources:
+              trips:
+                path: trips.parquet
+              ref:
+                path: ref.csv
+            checks:
+              trips:
+                - relationship: {column: trip_id, to: ref, to_column: missing}
+            """
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SpecError, match=r"'missing' does not exist in source 'ref'"):
+        Suite.from_file(tmp_path / "suite.yaml").run()
+
+
+# ---------------------------------------------------------------------------
+# tolerances (max_failed_rows / max_failed_pct)
+# ---------------------------------------------------------------------------
+
+
+def test_tolerance_absolute_passes_within_limit(
+    conn: duckdb.DuckDBPyConnection, make_parquet: MakeParquet
+) -> None:
+    make_parquet("t", "SELECT * FROM (VALUES (1), (NULL), (NULL)) AS v(id)")  # 2 nulls
+    result = build_check("t", NotNullSpec(columns=["id"], max_failed_rows=2)).evaluate(conn)
+    assert result.passed
+    assert result.tolerated
+    assert result.failed_rows == 2
+    assert "within tolerance" in result.message
+
+
+def test_tolerance_absolute_fails_when_exceeded(
+    conn: duckdb.DuckDBPyConnection, make_parquet: MakeParquet
+) -> None:
+    make_parquet("t", "SELECT * FROM (VALUES (1), (NULL), (NULL)) AS v(id)")  # 2 nulls
+    result = build_check("t", NotNullSpec(columns=["id"], max_failed_rows=1)).evaluate(conn)
+    assert not result.passed
+    assert not result.tolerated
+    assert "exceeds tolerance" in result.message
+
+
+def test_tolerance_percentage(
+    conn: duckdb.DuckDBPyConnection, make_parquet: MakeParquet
+) -> None:
+    make_parquet("t", "SELECT * FROM (VALUES (1), (2), (3), (NULL)) AS v(id)")  # 1/4 = 25%
+    within = build_check("t", NotNullSpec(columns=["id"], max_failed_pct=25)).evaluate(conn)
+    over = build_check("t", NotNullSpec(columns=["id"], max_failed_pct=24)).evaluate(conn)
+    assert within.passed
+    assert not over.passed
+
+
+# ---------------------------------------------------------------------------
 # nonexistent columns → configuration error, not a check failure
 # ---------------------------------------------------------------------------
 
@@ -616,3 +775,70 @@ def test_suite_run_missing_source_file(tmp_path: Path) -> None:
     )
     with pytest.raises(SourceError, match="does not exist"):
         Suite.from_file(tmp_path / "suite.yaml").run()
+
+
+# ---------------------------------------------------------------------------
+# database sources (DuckDB ATTACH)
+# ---------------------------------------------------------------------------
+
+
+def test_db_source_statements_postgres() -> None:
+    spec = SourceSpec(type="postgres", connection="host=h dbname=d", table="public.customers")
+    stmts = db_source_statements("cust", spec)
+    assert stmts[0] == "INSTALL postgres"
+    assert stmts[1] == "LOAD postgres"
+    assert stmts[2] == "ATTACH 'host=h dbname=d' AS \"_ql_src_cust\" (TYPE postgres, READ_ONLY)"
+    assert stmts[3] == (
+        'CREATE OR REPLACE VIEW "cust" AS '
+        'SELECT * FROM "_ql_src_cust"."public"."customers"'
+    )
+
+
+def test_db_source_unknown_type_needs_extension() -> None:
+    spec = SourceSpec(type="clickhouse", connection="host=h", table="events")
+    with pytest.raises(SourceError, match=r"unknown database type 'clickhouse'"):
+        db_source_statements("e", spec)
+
+
+def test_db_source_clickhouse_with_explicit_extension() -> None:
+    spec = SourceSpec(
+        type="clickhouse", connection="host=h", table="events", extension="chsql"
+    )
+    stmts = db_source_statements("e", spec)
+    assert stmts[0] == "INSTALL chsql"
+    assert "(TYPE clickhouse, READ_ONLY)" in stmts[2]
+
+
+def test_db_source_sqlite_end_to_end(tmp_path: Path) -> None:
+    import sqlite3
+
+    db = tmp_path / "shop.db"
+    con = sqlite3.connect(db)
+    con.executescript(
+        "CREATE TABLE customers(id INTEGER, name TEXT);"
+        "INSERT INTO customers VALUES (1, 'a'), (2, NULL);"
+    )
+    con.commit()
+    con.close()
+    (tmp_path / "suite.yaml").write_text(
+        dedent(
+            f"""\
+            version: 1
+            sources:
+              customers:
+                type: sqlite
+                connection: "{db.as_posix()}"
+                table: customers
+            checks:
+              customers:
+                - not_null: [id, name]
+                - row_count: {{min: 1}}
+            """
+        ),
+        encoding="utf-8",
+    )
+    results = Suite.from_file(tmp_path / "suite.yaml").run()
+    by_check = {r.check: r for r in results}
+    assert not by_check["not_null"].passed
+    assert by_check["not_null"].failed_rows == 1  # the NULL name
+    assert by_check["row_count"].passed

@@ -20,11 +20,15 @@ from quacklint.checks.base import Check, registered_checks
 from quacklint.checks.builtin import (
     AcceptedValuesCheck,
     CustomSqlCheck,
+    ExpectedColumnsCheck,
     FreshnessCheck,
+    NotEmptyStringCheck,
     NotNullCheck,
     RangeCheck,
     RegexMatchCheck,
+    RelationshipCheck,
     RowCountCheck,
+    StringLengthCheck,
     UniqueCheck,
 )
 
@@ -37,8 +41,12 @@ _EXAMPLES: dict[str, Check] = {
     "accepted_values": AcceptedValuesCheck("trips", "payment_type", ["card", "cash"]),
     "range": RangeCheck("trips", "fare", 0, 1000),
     "regex_match": RegexMatchCheck("trips", "trip_id", "t-[0-9]{3}"),
+    "not_empty_string": NotEmptyStringCheck("trips", ["trip_id"]),
+    "string_length": StringLengthCheck("trips", "trip_id", 3, 16),
     "freshness": FreshnessCheck("trips", "pickup_ts", timedelta(hours=24)),
     "row_count": RowCountCheck("trips", 1, 100000),
+    "expected_columns": ExpectedColumnsCheck("trips", ["trip_id", "pickup_ts"], False),
+    "relationship": RelationshipCheck("trips", "payment_type", "payment_types", "code"),
     "custom_sql": CustomSqlCheck(
         "trips", "no_negative_duration", "SELECT * FROM trips WHERE dropoff_ts < pickup_ts"
     ),

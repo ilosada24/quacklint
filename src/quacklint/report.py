@@ -51,8 +51,6 @@ def _fail_status(result: CheckResult) -> str:
 
 
 def _detail(result: CheckResult) -> str:
-    if result.passed:
-        return ""
     lines = [result.message] if result.message else []
     if result.sample_rows:
         sample = "; ".join(
@@ -81,6 +79,7 @@ def render_json(results: Sequence[CheckResult]) -> str:
                 "source": result.source,
                 "severity": result.severity,
                 "passed": result.passed,
+                "tolerated": result.tolerated,
                 "failed_rows": result.failed_rows,
                 "message": result.message,
                 "sample": [

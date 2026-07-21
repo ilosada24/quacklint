@@ -96,16 +96,25 @@ There's a complete, ready-to-run example in [examples/taxi](examples/taxi).
 
 ## Available checks
 
-| Check             | Rule                                                                |
-| ----------------- | ------------------------------------------------------------------- |
-| `not_null`        | The columns contain no `NULL`.                                      |
-| `unique`          | No duplicates in the column or combination (`NULL`s are ignored).   |
-| `row_count`       | Row count within `[min, max]` (inclusive).                          |
-| `accepted_values` | Every non-null value belongs to a given set.                        |
-| `range`           | Non-null numeric values within `[min, max]` (inclusive).            |
-| `regex_match`     | Non-null values fully match an RE2 regular expression.              |
-| `freshness`       | The most recent value of a timestamp column is not older than an age. |
-| `custom_sql`      | Arbitrary SQL whose result rows are violations.                     |
+| Check              | Rule                                                               |
+| ------------------ | ------------------------------------------------------------------ |
+| `not_null`         | The columns contain no `NULL`.                                     |
+| `unique`           | No duplicates in the column or combination (`NULL`s are ignored).  |
+| `row_count`        | Row count within `[min, max]` (inclusive).                        |
+| `accepted_values`  | Every non-null value belongs to a given set.                      |
+| `range`            | Non-null numeric values within `[min, max]` (inclusive).          |
+| `regex_match`      | Non-null values fully match an RE2 regular expression.            |
+| `not_empty_string` | Text columns contain no empty/whitespace-only value.              |
+| `string_length`    | Non-null string length within `[min, max]`.                       |
+| `expected_columns` | The source's schema contains the expected columns.               |
+| `freshness`        | The most recent value of a timestamp column is not older than an age. |
+| `relationship`     | Column values exist in another source's column (foreign key).    |
+| `custom_sql`       | Arbitrary SQL whose result rows are violations.                  |
+
+Any check can also set `severity: warn` (report without failing), a `tolerance`
+(`max_failed_rows` / `max_failed_pct`), and `tags` (for `--select`). Sources can
+be files (Parquet/CSV/JSON, incl. globs) or databases attached via DuckDB
+(`type: postgres | mysql | sqlite | …`).
 
 Syntax and generated SQL for each:
 [docs/checks-reference.md](docs/checks-reference.md). The full YAML format
@@ -120,6 +129,7 @@ $ quacklint run suite.yaml -f json       # JSON report
 $ quacklint run suite.yaml -f junit      # JUnit XML for CI
 $ quacklint run suite.yaml --explain     # print the compiled SQL, without running
 $ quacklint run suite.yaml --fail-fast   # stop at the first error (warnings don't stop)
+$ quacklint run suite.yaml --select critical  # only run checks tagged 'critical'
 $ quacklint run                          # no argument: uses ./quacklint.yaml
 ```
 

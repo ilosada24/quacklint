@@ -18,6 +18,7 @@ from quacklint.suite import (
     NotNullSpec,
     RangeSpec,
     RegexMatchSpec,
+    RelationshipSpec,
     RowCountSpec,
     SuiteSpec,
     UniqueSpec,
@@ -95,6 +96,45 @@ def test_full_suite_parses_into_typed_models() -> None:
     assert isinstance(custom, CustomSqlSpec)
     assert custom.name == "no_negative_duration"
     assert custom.query.startswith("SELECT")
+
+
+def test_database_source_parses() -> None:
+    spec = parse(
+        """
+        version: 1
+        sources:
+          customers:
+            type: postgres
+            connection: "host=h dbname=d"
+            table: public.customers
+        """
+    )
+    src = spec.sources["customers"]
+    assert src.is_database
+    assert src.type == "postgres"
+    assert src.table == "public.customers"
+
+
+def test_source_cannot_mix_path_and_database() -> None:
+    with pytest.raises(SpecError, match="not both"):
+        parse(
+            """
+            version: 1
+            sources:
+              x: {path: t.csv, type: postgres}
+            """
+        )
+
+
+def test_database_source_requires_all_fields() -> None:
+    with pytest.raises(SpecError, match="needs 'path'"):
+        parse(
+            """
+            version: 1
+            sources:
+              x: {type: postgres, connection: "c"}
+            """
+        )
 
 
 def test_minimal_suite_without_checks() -> None:
@@ -258,6 +298,124 @@ def test_severity_rejects_invalid_value() -> None:
             checks:
               t:
                 - row_count: {min: 1, severity: loud}
+            """
+        )
+
+
+def test_tags_parse() -> None:
+    spec = parse(
+        """
+        version: 1
+        sources:
+          t: {path: t.csv}
+        checks:
+          t:
+            - unique: {columns: [id], tags: [critical, pk]}
+        """
+    )
+    assert spec.checks["t"][0].tags == ["critical", "pk"]
+
+
+def test_default_severity_applied_when_unset() -> None:
+    spec = parse(
+        """
+        version: 1
+        defaults: {severity: warn}
+        sources:
+          t: {path: t.csv}
+        checks:
+          t:
+            - unique: id
+            - row_count: {min: 1, severity: error}
+        """
+    )
+    assert spec.checks["t"][0].severity == "warn"   # inherited default
+    assert spec.checks["t"][1].severity == "error"  # explicit wins
+
+
+def test_defaults_rejects_unknown_key() -> None:
+    with pytest.raises(SpecError, match="defaults"):
+        parse(
+            """
+            version: 1
+            defaults: {severities: warn}
+            sources:
+              t: {path: t.csv}
+            """
+        )
+
+
+def test_relationship_parses() -> None:
+    spec = parse(
+        """
+        version: 1
+        sources:
+          orders: {path: orders.csv}
+          customers: {path: customers.csv}
+        checks:
+          orders:
+            - relationship: {column: customer_id, to: customers, to_column: id}
+        """
+    )
+    check = spec.checks["orders"][0]
+    assert isinstance(check, RelationshipSpec)
+    assert (check.to, check.to_column) == ("customers", "id")
+
+
+def test_relationship_undeclared_target_rejected_at_parse() -> None:
+    with pytest.raises(SpecError, match=r"'to' references source 'nope'.*not declared"):
+        parse(
+            """
+            version: 1
+            sources:
+              orders: {path: orders.csv}
+            checks:
+              orders:
+                - relationship: {column: customer_id, to: nope, to_column: id}
+            """
+        )
+
+
+def test_tolerance_parses() -> None:
+    spec = parse(
+        """
+        version: 1
+        sources:
+          t: {path: t.csv}
+        checks:
+          t:
+            - not_null: {columns: [a], max_failed_rows: 5, max_failed_pct: 1.5}
+        """
+    )
+    check = spec.checks["t"][0]
+    assert check.max_failed_rows == 5
+    assert check.max_failed_pct == 1.5
+
+
+def test_tolerance_rejected_on_row_count() -> None:
+    with pytest.raises(SpecError, match="row_count does not support tolerance"):
+        parse(
+            """
+            version: 1
+            sources:
+              t: {path: t.csv}
+            checks:
+              t:
+                - row_count: {min: 1, max_failed_rows: 5}
+            """
+        )
+
+
+def test_tolerance_rejected_on_freshness() -> None:
+    with pytest.raises(SpecError, match="freshness does not support tolerance"):
+        parse(
+            """
+            version: 1
+            sources:
+              t: {path: t.csv}
+            checks:
+              t:
+                - freshness: {column: ts, max_age: 24h, max_failed_pct: 10}
             """
         )
 
