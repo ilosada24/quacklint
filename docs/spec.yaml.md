@@ -92,14 +92,40 @@ sources:
 | `table`      | yes      | Table to expose (may be `schema.table`).                        |
 | `extension`  | no       | DuckDB extension to install/load. Inferred for built-in types.  |
 | `read_only`  | no       | Attach read-only (default `true`).                              |
+| `materialize`| no       | Copy the table into local DuckDB once (default `true`).         |
 
 - A source is **either** a file (`path`) **or** a database (`type`/`connection`/
-  `table`), never both.
+  `table`), never both. `materialize` only applies to database sources.
 - Built-in types use DuckDB core extensions. Other backends — e.g. **ClickHouse**
   via a community extension — work by naming the extension explicitly:
   `{type: clickhouse, extension: <duckdb-extension>, connection: ..., table: ...}`.
   DuckDB must be able to `INSTALL`/`LOAD` that extension (needs network on first
   use); ClickHouse support is community-provided and not part of DuckDB core.
+
+### How database sources are read
+
+A database source is read **once**, into local DuckDB storage, and every check
+then runs against that local copy. Only the columns the checks actually
+reference are copied.
+
+This matters because a remote table is not a local file: without it, each check
+re-reads the table over the network, so a suite of N checks costs N full reads
+of every column. On a 1M-row / 21-column Postgres table, 13 checks move 1.5 GB
+as pass-through views versus 88 MB materialized and pruned (see
+[`benchmarks/`](../../benchmarks)).
+
+Column pruning is skipped — every column is copied — for any source that is
+read by a check whose columns cannot be known in advance:
+
+- **`expected_columns`**, which asserts which columns exist and so must see the
+  real schema rather than the subset quacklint chose to load;
+- **`custom_sql`**, whose query is arbitrary SQL; any source named in the query
+  is copied in full.
+
+Set `materialize: false` to keep the old streaming behaviour: checks read
+straight from the remote table, using no local memory and re-reading per check.
+Worth it only when the table is far too large to fit locally and the suite has
+very few checks.
 
 ## `checks`
 

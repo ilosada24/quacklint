@@ -15,9 +15,9 @@ import duckdb
 import pytest
 
 import quacklint.checks.builtin  # noqa: F401  (registers the built-in checks)
-from quacklint.checks.base import build_check, get_check
+from quacklint.checks.base import CheckResult, build_check, get_check
 from quacklint.errors import ExecutionError, SourceError, SpecError
-from quacklint.sources import create_views, db_source_statements
+from quacklint.sources import create_views, db_source_statements, materialize_statements
 from quacklint.suite import (
     AcceptedValuesSpec,
     CustomSqlSpec,
@@ -33,6 +33,7 @@ from quacklint.suite import (
     StringLengthSpec,
     Suite,
     UniqueSpec,
+    parse_suite,
 )
 
 MakeParquet = Callable[[str, str], Path]
@@ -842,3 +843,152 @@ def test_db_source_sqlite_end_to_end(tmp_path: Path) -> None:
     assert not by_check["not_null"].passed
     assert by_check["not_null"].failed_rows == 1  # the NULL name
     assert by_check["row_count"].passed
+
+
+# ---------------------------------------------------------------------------
+# materializing database sources (one remote read instead of one per check)
+# ---------------------------------------------------------------------------
+
+
+def _db_suite(tmp_path: Path, checks: str) -> Suite:
+    """A sqlite-backed suite over a table wider than the checks need."""
+    import sqlite3
+
+    db = tmp_path / "shop.db"
+    con = sqlite3.connect(db)
+    con.executescript(
+        "CREATE TABLE customers(id INTEGER, name TEXT, note TEXT, extra TEXT);"
+        "INSERT INTO customers VALUES (1, 'a', 'n1', 'x'), (2, NULL, 'n2', 'y');"
+    )
+    con.commit()
+    con.close()
+    (tmp_path / "suite.yaml").write_text(
+        dedent(
+            f"""\
+            version: 1
+            sources:
+              customers:
+                type: sqlite
+                connection: "{db.as_posix()}"
+                table: customers
+            checks:
+              customers:
+            """
+        )
+        + checks,
+        encoding="utf-8",
+    )
+    return Suite.from_file(tmp_path / "suite.yaml")
+
+
+def test_materialize_statements_prunes_to_requested_columns() -> None:
+    spec = SourceSpec(type="postgres", connection="host=h", table="public.customers")
+    stmts = materialize_statements("cust", spec, ["id", "name"])
+    assert stmts[0] == (
+        'CREATE OR REPLACE TABLE "cust" AS SELECT "id", "name" '
+        'FROM "_ql_src_cust"."public"."customers"'
+    )
+    assert stmts[1] == 'DETACH "_ql_src_cust"'
+
+
+def test_materialize_statements_without_columns_selects_all() -> None:
+    spec = SourceSpec(type="postgres", connection="host=h", table="t")
+    assert "SELECT * FROM" in materialize_statements("s", spec, None)[0]
+
+
+def test_materialize_only_applies_to_database_sources() -> None:
+    with pytest.raises(SpecError, match="only applies to database sources"):
+        parse_suite(
+            {
+                "version": 1,
+                "sources": {"t": {"path": "t.csv", "materialize": False}},
+            }
+        )
+
+
+def test_required_columns_is_union_of_referenced_columns(tmp_path: Path) -> None:
+    suite = _db_suite(tmp_path, "    - not_null: [id]\n    - unique: name\n")
+    assert suite.required_columns() == {"customers": ("id", "name")}
+
+
+def test_required_columns_all_columns_for_custom_sql(tmp_path: Path) -> None:
+    """custom_sql is arbitrary SQL: it may touch columns no spec declared."""
+    suite = _db_suite(
+        tmp_path,
+        "    - not_null: [id]\n"
+        "    - custom_sql: {name: n, query: SELECT * FROM customers WHERE note IS NULL}\n",
+    )
+    assert suite.required_columns() == {"customers": None}
+
+
+def test_required_columns_all_columns_for_expected_columns(tmp_path: Path) -> None:
+    """expected_columns asserts the schema, so it must see the real one."""
+    suite = _db_suite(
+        tmp_path,
+        "    - not_null: [id]\n    - expected_columns: [id, name, note, extra]\n",
+    )
+    assert suite.required_columns() == {"customers": None}
+
+
+def test_materialized_source_only_loads_needed_columns(tmp_path: Path) -> None:
+    """Pruning is observable: an undeclared column is absent from the local copy."""
+    suite = _db_suite(tmp_path, "    - not_null: [id, name]\n")
+    conn = duckdb.connect()
+    try:
+        from quacklint.sources import create_views, materialize_sources
+
+        create_views(conn, suite.spec.sources, suite.base_dir)
+        materialize_sources(conn, suite.spec.sources, suite.required_columns())
+        columns = {row[0] for row in conn.execute("DESCRIBE customers").fetchall()}
+        assert columns == {"id", "name"}
+    finally:
+        conn.close()
+
+
+def test_streaming_source_keeps_every_column(tmp_path: Path) -> None:
+    suite = _db_suite(tmp_path, "    - not_null: [id]\n")
+    sources = {
+        name: spec.model_copy(update={"materialize": False})
+        for name, spec in suite.spec.sources.items()
+    }
+    conn = duckdb.connect()
+    try:
+        from quacklint.sources import create_views, materialize_sources
+
+        create_views(conn, sources, suite.base_dir)
+        materialize_sources(conn, sources, suite.required_columns())
+        columns = {row[0] for row in conn.execute("DESCRIBE customers").fetchall()}
+        assert columns == {"id", "name", "note", "extra"}
+    finally:
+        conn.close()
+
+
+def test_pruning_preserves_schema_error_for_unknown_column(tmp_path: Path) -> None:
+    """The nice 'nonexistent column' error must survive materialization."""
+    suite = _db_suite(tmp_path, "    - not_null: [nope]\n")
+    with pytest.raises(SpecError, match=r"nonexistent column\(s\).*nope"):
+        suite.run()
+
+
+def test_materialized_and_streaming_agree(tmp_path: Path) -> None:
+    checks = (
+        "    - not_null: [id, name]\n"
+        "    - unique: id\n"
+        "    - row_count: {min: 1}\n"
+    )
+    suite = _db_suite(tmp_path, checks)
+    streamed = Suite(
+        spec=suite.spec.model_copy(
+            update={
+                "sources": {
+                    name: spec.model_copy(update={"materialize": False})
+                    for name, spec in suite.spec.sources.items()
+                }
+            }
+        ),
+        base_dir=suite.base_dir,
+    )
+    def signature(results: list[CheckResult]) -> list[tuple[str, bool, int]]:
+        return sorted((r.check, r.passed, r.failed_rows) for r in results)
+
+    assert signature(suite.run()) == signature(streamed.run())

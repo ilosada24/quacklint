@@ -26,7 +26,7 @@ from pydantic import (
 
 from quacklint.checks.base import CheckResult, Severity, build_check
 from quacklint.errors import SpecError
-from quacklint.sources import create_views, view_column_types
+from quacklint.sources import create_views, materialize_sources, view_column_types
 
 SUPPORTED_VERSION: Final = 1
 
@@ -106,6 +106,10 @@ class SourceSpec(BaseModel):
     table: str | None = Field(default=None, min_length=1)
     extension: str | None = Field(default=None, min_length=1)
     read_only: bool = True
+    # Copy the remote table into local DuckDB storage once, instead of leaving
+    # the source as a pass-through view that every check re-reads over the
+    # network. Set false to stream instead (lower memory, N remote reads).
+    materialize: bool = True
 
     @property
     def is_database(self) -> bool:
@@ -121,6 +125,8 @@ class SourceSpec(BaseModel):
                     "a source is either a file ('path') or a database "
                     "('type'/'connection'/'table'), not both"
                 )
+            if "materialize" in self.model_fields_set:
+                raise ValueError("'materialize' only applies to database sources")
             return self
         if not (self.type and self.connection and self.table):
             raise ValueError(
@@ -592,6 +598,15 @@ def load_suite(path: str | Path) -> SuiteSpec:
     return parse_suite(data)
 
 
+def _mentions_identifier(sql: str, name: str) -> bool:
+    """Whether `sql` references the identifier `name` (quoted or bare).
+
+    Deliberately generous: a false positive only costs us the column pruning,
+    while a false negative would prune a column the SQL needs.
+    """
+    return re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", sql) is not None
+
+
 @dataclass(frozen=True)
 class CompiledCheck:
     """A check's compiled SQL (for `quacklint run --explain`)."""
@@ -643,6 +658,38 @@ class Suite:
             for check_spec in entries
         ]
 
+    def required_columns(self) -> dict[str, tuple[str, ...] | None]:
+        """Per source, the columns its checks reference. None means 'all of them'.
+
+        Loading only these is what keeps a wide table from crossing the network
+        in full. It is sound only when every consumer of a source has declared
+        what it touches, so two cases opt a source out:
+
+        - `expected_columns` asserts which columns exist, so it has to see the
+          real schema rather than the subset we chose to load;
+        - `custom_sql` runs arbitrary SQL, so any source its query names may
+          reference columns no spec declared.
+        """
+        opaque: set[str] = set()
+        required: dict[str, set[str]] = {name: set() for name in self.spec.sources}
+        for source_name, entries in self.spec.checks.items():
+            for check_spec in entries:
+                if isinstance(check_spec, ExpectedColumnsSpec):
+                    opaque.add(source_name)
+                elif isinstance(check_spec, CustomSqlSpec):
+                    opaque.update(
+                        name
+                        for name in self.spec.sources
+                        if _mentions_identifier(check_spec.query, name)
+                    )
+                required[source_name].update(check_spec.referenced_columns())
+                for fsource, fcolumn in check_spec.referenced_foreign():
+                    required[fsource].add(fcolumn)
+        return {
+            name: None if name in opaque or not columns else tuple(sorted(columns))
+            for name, columns in required.items()
+        }
+
     def run(self, *, fail_fast: bool = False) -> list[CheckResult]:
         """Create the source views and evaluate all checks in DuckDB.
 
@@ -657,7 +704,11 @@ class Suite:
             # reproducible regardless of the host time zone.
             conn.execute("SET TimeZone='UTC'")
             create_views(conn, self.spec.sources, self.base_dir)
+            # Validate against the real schema while the sources are still
+            # pass-through views: a pruned copy would only expose the columns
+            # the checks asked for, turning a typo into an opaque remote error.
             self._check_referenced_columns(conn)
+            materialize_sources(conn, self.spec.sources, self.required_columns())
             results: list[CheckResult] = []
             for source_name, entries in self.spec.checks.items():
                 for check_spec in entries:
